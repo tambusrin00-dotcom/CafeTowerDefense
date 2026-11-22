@@ -262,7 +262,8 @@ namespace CafeTowerDefense
 
             // 원목 테두리 (두 겹으로 입체감)
             Prim(PrimitiveType.Cube, root, new Vector3(c, -0.25f, c), new Vector3(Cafe.W + 1.2f, 0.3f, Cafe.H + 1.2f), lit, WoodDark);
-            Prim(PrimitiveType.Cube, root, new Vector3(c, -0.08f, c), new Vector3(Cafe.W + 0.7f, 0.2f, Cafe.H + 0.7f), lit, WoodLight);
+            // 윗면(-0.01)이 바닥 타일(0.001)보다 낮아야 타일과 선이 가려지지 않음
+            Prim(PrimitiveType.Cube, root, new Vector3(c, -0.11f, c), new Vector3(Cafe.W + 0.7f, 0.2f, Cafe.H + 0.7f), lit, WoodLight);
 
             // 체크 타일 바닥. 타일마다 밝기를 살짝 달리해 손으로 깐 느낌
             const int px = 16;
@@ -287,6 +288,8 @@ namespace CafeTowerDefense
             boardMat.SetFloat("_Smoothness", 0.35f);
             var q = Prim(PrimitiveType.Quad, root, new Vector3(c, 0.001f, c), new Vector3(Cafe.W, Cafe.H, 1f), boardMat, Color.white, 0f, false);
             q.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
+
+            BuildGrid();
 
             // 체크포인트: 입구 = 초록 발매트, 중간 = 캐러멜 코스터, 진열대 = 케이크 스탠드
             var wps = Cafe.Waypoints;
@@ -314,6 +317,56 @@ namespace CafeTowerDefense
             }
 
             pathLine = Line("Path", 0.14f, new Color(1f, 0.95f, 0.85f, 0.28f), false);
+        }
+
+        /// <summary>
+        /// 칸 구분선. 텍스처 줄눈은 멀리서 흐려지므로 얇은 띠들을 하나의 메시로 바닥 위에 따로 그림.
+        /// 굵기·색은 GridWidth / GridColor로 조절.
+        /// </summary>
+        void BuildGrid()
+        {
+            const float GridWidth = 0.06f;
+            const float y = 0.012f;
+            var gridColor = MenuInfo.Argb(0xFFFFF1DC); // 밝은 크림색 (불투명)
+
+            var verts = new List<Vector3>();
+            var tris = new List<int>();
+            void Strip(Vector3 a, Vector3 b)
+            {
+                var dir = (b - a).normalized;
+                var side = new Vector3(-dir.z, 0f, dir.x) * (GridWidth / 2f);
+                int i = verts.Count;
+                verts.Add(a - side); verts.Add(a + side); verts.Add(b + side); verts.Add(b - side);
+                tris.Add(i); tris.Add(i + 1); tris.Add(i + 2);
+                tris.Add(i); tris.Add(i + 2); tris.Add(i + 3);
+            }
+
+            // 칸 중심이 정수 좌표이므로 경계는 -0.5 ~ W-0.5
+            float minX = -0.5f, maxX = Cafe.W - 0.5f;
+            float minZ = -0.5f, maxZ = Cafe.H - 0.5f;
+            for (int i = 0; i <= Cafe.W; i++) Strip(new Vector3(minX + i, y, minZ), new Vector3(minX + i, y, maxZ));
+            for (int j = 0; j <= Cafe.H; j++) Strip(new Vector3(minX, y, minZ + j), new Vector3(maxX, y, minZ + j));
+
+            var mesh = new Mesh { name = "CafeGrid" };
+            mesh.SetVertices(verts);
+            mesh.SetTriangles(tris, 0);
+            var up = new Vector3[verts.Count];
+            for (int i = 0; i < up.Length; i++) up[i] = Vector3.up;
+            mesh.normals = up;
+            mesh.RecalculateBounds();
+
+            // 바닥·컵과 같은 Lit 셰이더(확실히 그려짐)를 쓰고, 양면 렌더링으로 면 방향 문제도 없앰
+            var gridMat = new Material(litShader) { name = "Cafe_Grid" };
+            gridMat.SetFloat("_Cull", 0f);
+            gridMat.SetFloat("_Smoothness", 0.1f);
+
+            var go = new GameObject("Grid");
+            go.transform.SetParent(root, false);
+            go.AddComponent<MeshFilter>().sharedMesh = mesh;
+            var mr = go.AddComponent<MeshRenderer>();
+            mr.sharedMaterial = gridMat;
+            mr.shadowCastingMode = ShadowCastingMode.Off;
+            Paint(mr, gridColor);
         }
 
         void BuildOverlays()
