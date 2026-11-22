@@ -1,0 +1,16 @@
+# 텍스트 파일은 줄바꿈 자동 정리, Unity YAML은 병합 시 텍스트로 취급
+* text=auto
+*.cs text diff=csharp
+*.unity text merge=unityyamlmerge eol=lf
+*.prefab text merge=unityyamlmerge eol=lf
+*.asset text merge=unityyamlmerge eol=lf
+*.meta text eol=lf
+
+# 바이너리
+*.png binary
+*.jpg binary
+*.psd binary
+*.fbx binary
+*.wav binary
+*.mp3 binary
+*.ttf binary
