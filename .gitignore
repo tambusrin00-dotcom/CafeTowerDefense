@@ -41,3 +41,6 @@ sysinfo.txt
 # OS
 .DS_Store
 Thumbs.db
+
+# Unity 빌드 임시 폴더
+/.utmp/
