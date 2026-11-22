@@ -2,7 +2,9 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.EnhancedTouch;
 using UnityEngine.InputSystem.UI;
+using ETouch = UnityEngine.InputSystem.EnhancedTouch.Touch;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
 
@@ -36,9 +38,6 @@ namespace CafeTowerDefense
         float flashTime;
         Cell? hoverCell;
 
-        bool pressing;
-        bool downOverUI;
-        Vector2 downPos;
         readonly List<RaycastResult> uiHits = new List<RaycastResult>();
         PointerEventData pointerData;
 
@@ -49,6 +48,8 @@ namespace CafeTowerDefense
             Screen.autorotateToPortrait = false;
             Screen.autorotateToPortraitUpsideDown = false;
             Screen.orientation = ScreenOrientation.AutoRotation;
+
+            EnhancedTouchSupport.Enable(); // 두 손가락 확대/축소용 멀티터치
 
             Cafe = new Cafe();
             SetupCamera();
@@ -149,33 +150,155 @@ namespace CafeTowerDefense
             Cafe.TickUi(dt);
             if (flashTime > 0f) flashTime -= dt;
 
-            HandleInput();
-            FitCamera();
+            UpdateCameraRect();
+            HandleInput(dt);
+            ClampPan();
+            ApplyCamera();
             view.Sync(cam, flashCell, flashTime, hoverCell, dt * Speed); // 연출도 배속·일시정지를 따름
             ui.Refresh(cam);
         }
 
-        // =================================================================== 카메라
+        // =================================================================== 카메라 (확대/축소·이동)
+        //
+        // 직교 카메라라서 '배율(orthoSize)'과 '보는 중심(camTarget)' 두 값만 바꾸면 확대·이동이 되고
+        // 게임판을 그리는 코드는 손대지 않아도 됨. (원래 설계의 cs = 칸 크기, ox/oy = 원점에 해당)
+        //   칸 하나의 화면 크기(px) = cam.pixelHeight / (2 * orthoSize)
+        //   배율 범위: 최대 축소 = 게임판 전체가 보이는 크기, 기본 = 34dp, 최대 확대 = 72dp
+        //   (PC처럼 DPI가 낮아 72dp가 전체 보기보다 작으면 최대 확대를 전체 보기의 2.5배로 보정)
 
-        /// <summary>오른쪽 패널을 뺀 영역에 보드 전체가 들어오도록 카메라 배치</summary>
-        void FitCamera()
+        const float CamDistance = 30f;
+        const float BoardMargin = 0.9f;   // 게임판 가장자리 바깥으로 더 보여줄 여유(칸)
+        const float DefaultCellDp = 34f;
+        const float MaxCellDp = 72f;
+
+        float orthoSize = 10f;
+        Vector2 camTarget;                // 보는 중심 (월드 x, z)
+        bool camReady;
+        bool atFit = true;                // '전체 보기' 상태면 화면 크기가 바뀌어도 계속 전체를 보여줌
+
+        static float PitchSin => Mathf.Sin(CameraPitch * Mathf.Deg2Rad);
+        static float PitchCos => Mathf.Cos(CameraPitch * Mathf.Deg2Rad);
+        static Vector2 BoardCenter => new Vector2((Cafe.W - 1) / 2f, (Cafe.H - 1) / 2f);
+        static float BoardHalfW => Cafe.W / 2f + BoardMargin;
+        static float BoardHalfD => Cafe.H / 2f + BoardMargin;
+
+        static float DpToPx(float dp) => dp * (Screen.dpi > 0f ? Screen.dpi : 96f) / 160f;
+        float SizeForCellPx(float px) => cam.pixelHeight / (2f * Mathf.Max(1f, px));
+        float CellPx(float size) => cam.pixelHeight / (2f * size);
+
+        /// <summary>게임판 전체가 보이는 배율 = 가장 많이 축소한 상태</summary>
+        float FitSize => Mathf.Max(BoardHalfD * PitchSin + 0.8f * PitchCos, BoardHalfW / cam.aspect);
+        float MaxSize => FitSize;
+        float MinSize => Mathf.Min(FitSize, SizeForCellPx(Mathf.Max(DpToPx(MaxCellDp), CellPx(FitSize) * 2.5f)));
+        float DefaultSize => Mathf.Clamp(SizeForCellPx(DpToPx(DefaultCellDp)), MinSize, MaxSize);
+
+        public bool AtFit => atFit;
+        public bool CanZoomIn => orthoSize > MinSize + 0.01f;
+        public bool CanZoomOut => orthoSize < MaxSize - 0.01f;
+
+        public void ZoomIn() => ZoomAt(cam.pixelRect.center, orthoSize / 1.3f);
+        public void ZoomOut() => ZoomAt(cam.pixelRect.center, orthoSize * 1.3f);
+
+        public void ZoomFit()
         {
-            float panelPx = CafeUI.PanelWidth * ui.ScaleFactor;
-            float wFrac = Mathf.Clamp(1f - panelPx / Mathf.Max(1, Screen.width), 0.3f, 1f);
-            cam.rect = new Rect(0f, 0f, wFrac, 1f);
+            orthoSize = MaxSize;
+            camTarget = BoardCenter;
+            atFit = true;
+            ClampPan();
+            ApplyCamera();
+        }
 
-            const float halfV = 10.4f; // 보드를 기울여 봤을 때의 세로 절반 + 여유
-            const float halfH = 10.6f;
-            float t = Mathf.Tan(cam.fieldOfView * 0.5f * Mathf.Deg2Rad);
-            float dist = Mathf.Max(halfV / t, halfH / (t * cam.aspect));
-            var target = new Vector3((Cafe.W - 1) / 2f, 0f, (Cafe.H - 1) / 2f - 0.3f);
+        /// <summary>패널을 뺀 영역만 카메라가 그림. 패널 토글 애니메이션 중에도 매 프레임 따라감.</summary>
+        void UpdateCameraRect()
+        {
+            float wFrac = Mathf.Clamp(1f - ui.RightInsetPx / Mathf.Max(1, Screen.width), 0.3f, 1f);
+            cam.rect = new Rect(0f, 0f, wFrac, 1f);
+            if (!camReady)
+            {
+                camReady = true;
+                orthoSize = DefaultSize;
+                atFit = orthoSize >= MaxSize - 0.001f;
+                camTarget = BoardCenter;
+            }
+        }
+
+        /// <summary>
+        /// 배율·이동 범위 제한. 화면이 게임판보다 넓은 방향은 가운데에 고정하고,
+        /// 좁은 방향은 게임판 가장자리가 화면 안쪽으로 들어오지 않게 막음.
+        /// 패널을 토글해 영역이 바뀌면 칸 크기는 그대로 두고 이 함수로 위치만 보정됨.
+        /// </summary>
+        void ClampPan()
+        {
+            if (atFit) orthoSize = MaxSize;
+            orthoSize = Mathf.Clamp(orthoSize, MinSize, MaxSize);
+            float visHalfW = orthoSize * cam.aspect;
+            float visHalfD = orthoSize / PitchSin;
+            var c = BoardCenter;
+            camTarget.x = visHalfW >= BoardHalfW ? c.x : Mathf.Clamp(camTarget.x, c.x - BoardHalfW + visHalfW, c.x + BoardHalfW - visHalfW);
+            camTarget.y = visHalfD >= BoardHalfD ? c.y : Mathf.Clamp(camTarget.y, c.y - BoardHalfD + visHalfD, c.y + BoardHalfD - visHalfD);
+        }
+
+        void ApplyCamera()
+        {
+            cam.orthographic = true;
+            cam.orthographicSize = orthoSize;
             var rot = Quaternion.Euler(CameraPitch, 0f, 0f);
-            cam.transform.SetPositionAndRotation(target - rot * Vector3.forward * dist, rot);
+            var target = new Vector3(camTarget.x, 0f, camTarget.y);
+            cam.transform.SetPositionAndRotation(target - rot * Vector3.forward * CamDistance, rot);
+        }
+
+        bool ScreenToGround(Vector2 pos, out Vector2 ground)
+        {
+            var ray = cam.ScreenPointToRay(pos);
+            if (new Plane(Vector3.up, Vector3.zero).Raycast(ray, out float enter))
+            {
+                var p = ray.GetPoint(enter);
+                ground = new Vector2(p.x, p.z);
+                return true;
+            }
+            ground = default;
+            return false;
+        }
+
+        /// <summary>화면의 한 점(손가락·마우스 위치) 아래 게임판 지점을 고정한 채 배율 변경</summary>
+        void ZoomAt(Vector2 screenPos, float newSize)
+        {
+            bool ok = ScreenToGround(screenPos, out var before);
+            orthoSize = Mathf.Clamp(newSize, MinSize, MaxSize);
+            atFit = orthoSize >= MaxSize - 0.001f;
+            ApplyCamera();
+            if (ok && ScreenToGround(screenPos, out var after)) camTarget += before - after;
+            ClampPan();
+            ApplyCamera();
+        }
+
+        /// <summary>화면에서 from → to 로 끈 만큼 게임판을 따라 움직임</summary>
+        void PanScreen(Vector2 from, Vector2 to)
+        {
+            float pxPerUnit = cam.pixelHeight / (2f * orthoSize);
+            var d = to - from;
+            camTarget.x -= d.x / pxPerUnit;
+            camTarget.y -= d.y / (pxPerUnit * PitchSin);
+            ClampPan();
+            ApplyCamera();
         }
 
         // =================================================================== 입력
 
-        void HandleInput()
+        float TapSlop => Mathf.Max(8f, DpToPx(10f));
+
+        // 마우스
+        bool mouseDown, mouseDownOverUI, mouseDragging;
+        Vector2 mouseDownPos, mouseLastPos;
+
+        // 터치
+        int lastTouchCount;
+        bool touchOverUI, touchGesture;
+        Vector2 touchStartPos, lastMid, lastTapPos;
+        float lastDist;
+        readonly List<Vector2> touchPos = new List<Vector2>();
+
+        void HandleInput(float dt)
         {
             var kb = Keyboard.current;
             if (kb != null)
@@ -186,30 +309,135 @@ namespace CafeTowerDefense
                 if (kb.digit2Key.wasPressedThisFrame || kb.numpad2Key.wasPressedThisFrame) SetSpeed(2);
                 if (kb.digit3Key.wasPressedThisFrame || kb.numpad3Key.wasPressedThisFrame) SetSpeed(3);
                 if (kb.rKey.wasPressedThisFrame) ui.ShowRecipes = !ui.ShowRecipes;
+                if (kb.tabKey.wasPressedThisFrame) ui.TogglePanel();
+                if (kb.equalsKey.wasPressedThisFrame || kb.numpadPlusKey.wasPressedThisFrame) ZoomIn();
+                if (kb.minusKey.wasPressedThisFrame || kb.numpadMinusKey.wasPressedThisFrame) ZoomOut();
+                if (kb.digit0Key.wasPressedThisFrame || kb.numpad0Key.wasPressedThisFrame) ZoomFit();
+                // 방향키 이동
+                var move = Vector2.zero;
+                if (kb.leftArrowKey.isPressed) move.x -= 1f;
+                if (kb.rightArrowKey.isPressed) move.x += 1f;
+                if (kb.upArrowKey.isPressed) move.y += 1f;
+                if (kb.downArrowKey.isPressed) move.y -= 1f;
+                if (move != Vector2.zero) PanScreen(Vector2.zero, -move * cam.pixelHeight * 0.8f * dt);
             }
-            var mouse = Mouse.current;
-            if (mouse != null && mouse.rightButton.wasPressedThisFrame) Deselect();
 
-            var p = Pointer.current;
             hoverCell = null;
-            if (p == null) return;
-            var pos = p.position.ReadValue();
+            if (Touchscreen.current != null && (ETouch.activeTouches.Count > 0 || lastTouchCount > 0))
+                HandleTouch();
+            else
+                HandleMouse();
+        }
 
-            // 마우스일 때만 칸 미리보기 (터치는 손을 떼면 의미 없음)
-            if (p is Mouse && !ui.ShowRecipes && !IsOverUI(pos)) hoverCell = CellAt(pos);
+        /// <summary>마우스: 왼쪽 클릭 = 탭, 왼쪽/가운데 드래그 = 이동, 휠 = 커서 위치 기준 확대/축소, 오른쪽 = 선택 해제</summary>
+        void HandleMouse()
+        {
+            var m = Mouse.current;
+            if (m == null) return;
+            var pos = m.position.ReadValue();
+            bool overUI = IsOverUI(pos);
 
-            if (p.press.wasPressedThisFrame)
+            if (m.rightButton.wasPressedThisFrame) Deselect();
+
+            if (!overUI && !ui.ShowRecipes)
             {
-                pressing = true;
-                downPos = pos;
-                downOverUI = IsOverUI(pos);
+                float wheel = m.scroll.ReadValue().y;
+                if (wheel != 0f)
+                {
+                    // 장치에 따라 한 칸이 120 또는 1로 들어옴
+                    float steps = Mathf.Clamp(Mathf.Abs(wheel) > 10f ? wheel / 120f : wheel, -3f, 3f);
+                    ZoomAt(pos, orthoSize * Mathf.Pow(0.85f, steps));
+                }
             }
-            if (p.press.wasReleasedThisFrame && pressing)
+
+            if (m.leftButton.wasPressedThisFrame)
             {
-                pressing = false;
-                float slop = Screen.height * 0.02f;
-                if (!downOverUI && (pos - downPos).sqrMagnitude <= slop * slop) TapBoard(pos);
+                mouseDown = true;
+                mouseDownOverUI = overUI;
+                mouseDownPos = pos;
+                mouseDragging = false;
             }
+            if (mouseDown && m.leftButton.isPressed && !mouseDownOverUI)
+            {
+                if (!mouseDragging && (pos - mouseDownPos).magnitude > TapSlop) mouseDragging = true;
+                if (mouseDragging) PanScreen(mouseLastPos, pos);
+            }
+            if (m.middleButton.isPressed && !m.middleButton.wasPressedThisFrame && !overUI) PanScreen(mouseLastPos, pos);
+
+            if (m.leftButton.wasReleasedThisFrame && mouseDown)
+            {
+                mouseDown = false;
+                if (!mouseDownOverUI && !mouseDragging) TapBoard(pos);
+                mouseDragging = false;
+            }
+            mouseLastPos = pos;
+
+            // 칸 미리보기 (드래그 중에는 숨김)
+            if (!overUI && !ui.ShowRecipes && !mouseDragging) hoverCell = CellAt(pos);
+        }
+
+        /// <summary>
+        /// 터치: 한 손가락 드래그 = 이동, 두 손가락 = 확대/축소 + 이동, 움직이지 않고 뗀 한 손가락 = 탭.
+        /// 손가락 수가 바뀌는 순간에는 기준점만 다시 잡아서 판이 튀지 않게 함.
+        /// UI 위에서 시작한 터치는 통째로 무시 (버튼 열 스크롤과 게임판 이동이 섞이지 않음).
+        /// </summary>
+        void HandleTouch()
+        {
+            touchPos.Clear();
+            foreach (var t in ETouch.activeTouches)
+            {
+                var ph = t.phase;
+                if (ph == UnityEngine.InputSystem.TouchPhase.Began || ph == UnityEngine.InputSystem.TouchPhase.Moved ||
+                    ph == UnityEngine.InputSystem.TouchPhase.Stationary)
+                    touchPos.Add(t.screenPosition);
+                else lastTapPos = t.screenPosition; // 이번 프레임에 뗀 손가락 위치
+            }
+            int n = touchPos.Count;
+
+            if (lastTouchCount == 0 && n > 0)
+            {
+                // 새 터치 묶음 시작
+                touchOverUI = IsOverUI(touchPos[0]);
+                touchGesture = false;
+                touchStartPos = touchPos[0];
+                ResetTouchRef();
+            }
+            else if (n > 0 && !touchOverUI)
+            {
+                if (n != lastTouchCount)
+                {
+                    ResetTouchRef(); // 손가락 수가 바뀜 → 기준만 다시 잡음
+                }
+                else
+                {
+                    var mid = Mid();
+                    float dist = n >= 2 ? Vector2.Distance(touchPos[0], touchPos[1]) : 0f;
+                    if (n == 1)
+                    {
+                        if (!touchGesture && (touchPos[0] - touchStartPos).magnitude > TapSlop) touchGesture = true;
+                        if (touchGesture) PanScreen(lastMid, mid);
+                    }
+                    else
+                    {
+                        if (lastDist > 1f && dist > 1f) ZoomAt(mid, orthoSize * lastDist / dist);
+                        PanScreen(lastMid, mid);
+                    }
+                    lastMid = mid;
+                    lastDist = dist;
+                }
+                if (n >= 2) touchGesture = true;
+            }
+
+            if (n == 0 && lastTouchCount > 0 && !touchOverUI && !touchGesture) TapBoard(lastTapPos);
+            lastTouchCount = n;
+        }
+
+        Vector2 Mid() => touchPos.Count >= 2 ? (touchPos[0] + touchPos[1]) * 0.5f : touchPos[0];
+
+        void ResetTouchRef()
+        {
+            lastMid = Mid();
+            lastDist = touchPos.Count >= 2 ? Vector2.Distance(touchPos[0], touchPos[1]) : 0f;
         }
 
         void Deselect()

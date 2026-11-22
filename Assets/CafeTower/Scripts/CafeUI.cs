@@ -12,8 +12,26 @@ namespace CafeTowerDefense
     /// </summary>
     public class CafeUI
     {
+        /// <summary>정보 패널 폭 (캔버스 단위, 화면 높이 1080 기준). 패널은 고정 폭이고 나머지는 모두 게임판.</summary>
         public const float PanelWidth = 560f;
+        /// <summary>패널을 숨겼을 때 보이는 간략 버튼 열의 폭</summary>
+        public const float CompactWidth = 132f;
         const float RefHeight = 1080f;
+
+        // 패널 숨기기
+        public bool PanelVisible = true;
+        float panelT = 1f; // 1 = 패널, 0 = 간략 버튼 열 (애니메이션 중간값 포함)
+        RectTransform panelGroup, compactRT, boardArea;
+        CanvasGroup panelCG, compactCG;
+
+        /// <summary>게임판 오른쪽을 가리는 UI 폭(화면 픽셀). 카메라 영역 계산용.</summary>
+        public float RightInsetPx => RightInsetUnits * ScaleFactor;
+        float RightInsetUnits => Mathf.Lerp(CompactWidth, PanelWidth, Mathf.SmoothStep(0f, 1f, panelT));
+
+        public void TogglePanel() => PanelVisible = !PanelVisible;
+
+        /// <summary>패널과 간략 버튼 열이 함께 쓰는 행동 목록</summary>
+        enum Act { Pause, Speed1, Speed2, Speed3, Recipes, ZoomIn, ZoomFit, ZoomOut, NewGame, TogglePanel }
 
         readonly CafeApp app;
         Cafe G => app.Cafe;
@@ -141,8 +159,9 @@ namespace CafeTowerDefense
             canvas = NewCanvas(parent, "CafeUI", 10, true);
             var ct = canvas.transform;
             BuildPanel(ct);
+            BuildCompact(ct);
 
-            var boardArea = Ui.RT("BoardArea", ct);
+            boardArea = Ui.RT("BoardArea", ct);
             Ui.Stretch(boardArea, 0, 0, PanelWidth, 0);
             BuildToast(boardArea);
             BuildBanner(boardArea);
@@ -153,8 +172,14 @@ namespace CafeTowerDefense
 
         // =================================================================== 오른쪽 패널
 
-        void BuildPanel(Transform ct)
+        void BuildPanel(Transform canvasRoot)
         {
+            // 패널 전체(그림자·패널·토글 탭)를 한 그룹으로 묶어 옆으로 밀어서 숨김
+            panelGroup = Ui.RT("PanelGroup", canvasRoot);
+            Ui.Stretch(panelGroup);
+            panelCG = panelGroup.gameObject.AddComponent<CanvasGroup>();
+            var ct = panelGroup;
+
             var shadow = Ui.Img(ct, new Color(0f, 0f, 0f, 0.55f), Ui.Shadow, "PanelShadow");
             shadow.raycastTarget = false;
             var srt = shadow.rectTransform;
@@ -189,31 +214,118 @@ namespace CafeTowerDefense
             bodyScroll = Ui.Scroll(panel, out body, Ui.Pad(0, 0, 2, 8), 12);
             Ui.LE(bodyScroll, flexH: 1, minH: 120);
 
-            // 하단: 속도
+            // 하단 버튼 (간략 버튼 열과 같은 행동 목록 사용)
             Ui.Divider(panel);
             var speedRow = Ui.Row(panel, 8, 52, true);
-            string[] speedLabels = { "정지", "1x", "2x", "3x" };
-            for (int i = 0; i < 4; i++)
-            {
-                int sp = i;
-                var b = Ui.Button(speedRow, speedLabels[i], Theme.BtnNeutral, () => app.SetSpeed(sp), null, 21, 52);
-                b.DynColor = () => app.Speed == sp ? (sp == 0 ? Theme.BtnRed : Theme.BtnBlue) : Theme.BtnNeutral;
-            }
-
+            foreach (var a in new[] { Act.Pause, Act.Speed1, Act.Speed2, Act.Speed3 }) ActButton(speedRow, a, false, 52, 21);
             var row2 = Ui.Row(panel, 8, 56, true);
-            var rb = Ui.Button(row2, "레시피", Theme.BtnPurple, () => ShowRecipes = !ShowRecipes, null, 22, 56);
-            rb.DynLabel = () => ShowRecipes ? "레시피 닫기" : "레시피 보기";
-            var ng = Ui.Button(row2, "새 영업", Theme.BtnNeutral, () =>
+            ActButton(row2, Act.Recipes, false, 56, 22);
+            ActButton(row2, Act.NewGame, false, 56, 22);
+            var row3 = Ui.Row(panel, 8, 48, true);
+            foreach (var a in new[] { Act.ZoomOut, Act.ZoomFit, Act.ZoomIn }) ActButton(row3, a, false, 48, 19);
+
+            // 패널 왼쪽 가장자리에 붙은 숨기기 탭
+            var tab = ActButton(ct, Act.TogglePanel, false, 0, 24);
+            var trt = (RectTransform)tab.transform;
+            trt.anchorMin = trt.anchorMax = new Vector2(1f, 0.5f);
+            trt.pivot = new Vector2(1f, 0.5f);
+            trt.sizeDelta = new Vector2(46f, 120f);
+            trt.anchoredPosition = new Vector2(-(PanelWidth - 14f), 0f);
+        }
+
+        /// <summary>패널을 숨겼을 때 오른쪽에 남는 간략 버튼 열 (상태 정보 + 공통 행동). 내용이 길면 위아래로 스크롤.</summary>
+        void BuildCompact(Transform ct)
+        {
+            var bg = Ui.Img(ct, Theme.Panel, Ui.Round, "CompactColumn");
+            compactRT = bg.rectTransform;
+            compactRT.anchorMin = new Vector2(1, 0);
+            compactRT.anchorMax = new Vector2(1, 1);
+            compactRT.pivot = new Vector2(1, 0.5f);
+            compactRT.sizeDelta = new Vector2(CompactWidth - 16f, -20f);
+            compactCG = bg.gameObject.AddComponent<CanvasGroup>();
+
+            var scroll = Ui.Scroll(bg.transform, out var col, Ui.Pad(10, 10, 12, 12), 8);
+            Ui.Stretch((RectTransform)scroll.transform);
+
+            ActButton(col, Act.TogglePanel, true, 52, 19);
+
+            // 상태 정보 상자
+            var box = Ui.Card(col, Theme.Card, 10, 8).transform;
+            StatusLine(box, Ui.Bug, Theme.Dim, () => $"{G.Wave}<size=14><color=#{Theme.Hex(Theme.Hint)}>/{Cafe.MaxWave}</color></size>");
+            StatusLine(box, Ui.Cake, Theme.Red, () => G.Desserts.ToString());
+            StatusLine(box, Ui.Coin, Theme.Gold, () => $"{G.Coins:N0}");
+
+            Ui.Divider(col);
+            foreach (var a in new[] { Act.Pause, Act.Speed1, Act.Speed2, Act.Speed3 }) ActButton(col, a, true, 46, 19);
+            Ui.Divider(col);
+            foreach (var a in new[] { Act.ZoomIn, Act.ZoomFit, Act.ZoomOut }) ActButton(col, a, true, 46, 19);
+            Ui.Divider(col);
+            ActButton(col, Act.Recipes, true, 46, 18);
+            ActButton(col, Act.NewGame, true, 46, 17);
+        }
+
+        void StatusLine(Transform parent, Sprite icon, Color color, System.Func<string> value)
+        {
+            var row = Ui.Row(parent, 8);
+            Ui.Icon(row, icon, color, 22);
+            var t = Ui.Txt(row, "", 20, Theme.Text, true);
+            t.horizontalOverflow = HorizontalWrapMode.Overflow;
+            UiTicker.Attach(t, () => t.text = value());
+        }
+
+        bool NewGameArmed => Time.unscaledTime < newGameArmedUntil;
+
+        /// <summary>공통 행동 버튼. compact = 간략 버튼 열용 짧은 라벨.</summary>
+        ButtonFx ActButton(Transform parent, Act a, bool compact, float height, int font)
+        {
+            ButtonFx b;
+            switch (a)
             {
-                if (Time.unscaledTime < newGameArmedUntil)
+                case Act.Pause:
+                case Act.Speed1:
+                case Act.Speed2:
+                case Act.Speed3:
                 {
-                    newGameArmedUntil = 0f;
-                    StartNewGame();
+                    int sp = a - Act.Pause;
+                    b = Ui.Button(parent, sp == 0 ? "정지" : $"{sp}x", Theme.BtnNeutral, () => app.SetSpeed(sp), null, font, height);
+                    b.DynColor = () => app.Speed == sp ? (sp == 0 ? Theme.BtnRed : Theme.BtnBlue) : Theme.BtnNeutral;
+                    break;
                 }
-                else newGameArmedUntil = Time.unscaledTime + 3f;
-            }, null, 22, 56);
-            ng.DynLabel = () => Time.unscaledTime < newGameArmedUntil ? "한 번 더 누르면 시작" : "새 영업";
-            ng.DynColor = () => Time.unscaledTime < newGameArmedUntil ? Theme.BtnRed : Theme.BtnNeutral;
+                case Act.Recipes:
+                    b = Ui.Button(parent, "레시피", Theme.BtnPurple, () => ShowRecipes = !ShowRecipes, null, font, height);
+                    b.DynLabel = compact
+                        ? (System.Func<string>)(() => ShowRecipes ? "닫기" : "레시피")
+                        : () => ShowRecipes ? "레시피 닫기" : "레시피 보기";
+                    break;
+                case Act.ZoomIn:
+                    b = Ui.Button(parent, compact ? "+" : "+ 확대", Theme.BtnNeutral, app.ZoomIn, () => app.CanZoomIn, font, height);
+                    break;
+                case Act.ZoomFit:
+                    b = Ui.Button(parent, compact ? "전체" : "전체 보기", Theme.BtnNeutral, app.ZoomFit, () => !app.AtFit, font, height);
+                    break;
+                case Act.ZoomOut:
+                    b = Ui.Button(parent, compact ? "-" : "- 축소", Theme.BtnNeutral, app.ZoomOut, () => app.CanZoomOut, font, height);
+                    break;
+                case Act.NewGame:
+                    b = Ui.Button(parent, "새 영업", Theme.BtnNeutral, () =>
+                    {
+                        if (NewGameArmed)
+                        {
+                            newGameArmedUntil = 0f;
+                            StartNewGame();
+                        }
+                        else newGameArmedUntil = Time.unscaledTime + 3f;
+                    }, null, font, height);
+                    b.DynLabel = compact
+                        ? (System.Func<string>)(() => NewGameArmed ? "한 번 더" : "새 영업")
+                        : () => NewGameArmed ? "한 번 더 누르면 시작" : "새 영업";
+                    b.DynColor = () => NewGameArmed ? Theme.BtnRed : Theme.BtnNeutral;
+                    break;
+                default: // TogglePanel
+                    b = Ui.Button(parent, compact ? "◀ 패널" : "▶", Theme.BtnTeal, TogglePanel, null, font, height);
+                    break;
+            }
+            return b;
         }
 
         static Text Chip(Transform parent, Sprite icon, Color color, string caption, out Image bg)
@@ -258,7 +370,7 @@ namespace CafeTowerDefense
             QualityCard();
             if (!G.Selected.HasValue)
             {
-                var hint = Ui.Txt(body, "음료나 빈 컵을 눌러 자세한 정보를 확인하세요.\nESC·우클릭 선택 해제  ·  Space 일시정지  ·  1~3 배속  ·  R 레시피",
+                var hint = Ui.Txt(body, "음료나 빈 컵을 눌러 자세한 정보를 확인하세요.\n휠·두 손가락 확대/축소  ·  드래그 이동  ·  Tab 패널 숨기기\nESC·우클릭 선택 해제  ·  Space 일시정지  ·  1~3 배속  ·  R 레시피",
                     17, Theme.Hint, false, TextAnchor.UpperCenter);
                 hint.lineSpacing = 1.3f;
             }
@@ -739,8 +851,15 @@ namespace CafeTowerDefense
                 lastSelected = G.Selected;
                 bodySig = sig;
                 RebuildBody();
-                if (selChanged && G.Selected.HasValue) bodyScroll.verticalNormalizedPosition = 1f;
+                if (selChanged && G.Selected.HasValue)
+                {
+                    bodyScroll.verticalNormalizedPosition = 1f;
+                    // 음료·빈 컵을 고르면 그 정보와 행동 버튼은 패널에만 있으므로 패널을 다시 엶
+                    PanelVisible = true;
+                }
             }
+
+            UpdatePanelSlide(dt);
 
             UpdateBanner(dt);
             UpdateToast(dt);
@@ -753,6 +872,23 @@ namespace CafeTowerDefense
 
             vignetteT = Mathf.Max(0f, vignetteT - dt * 1.6f);
             vignette.color = Theme.Alpha(Theme.Red, vignetteT * 0.75f);
+        }
+
+        /// <summary>패널 ↔ 간략 버튼 열 전환 애니메이션. 게임판 영역(boardArea)도 함께 넓어지거나 좁아짐.</summary>
+        void UpdatePanelSlide(float dt)
+        {
+            panelT = Mathf.MoveTowards(panelT, PanelVisible ? 1f : 0f, dt / 0.22f);
+            float e = Mathf.SmoothStep(0f, 1f, panelT);
+
+            panelGroup.anchoredPosition = new Vector2((1f - e) * (PanelWidth + 60f), 0f);
+            panelCG.alpha = Mathf.Clamp01(e * 1.5f);
+            panelCG.blocksRaycasts = panelCG.interactable = e > 0.5f;
+
+            compactRT.anchoredPosition = new Vector2(-8f + e * (CompactWidth + 40f), 0f);
+            compactCG.alpha = Mathf.Clamp01((1f - e) * 1.5f);
+            compactCG.blocksRaycasts = compactCG.interactable = e < 0.5f;
+
+            boardArea.offsetMax = new Vector2(-RightInsetUnits, 0f);
         }
 
         void UpdateHeader(float dt)
