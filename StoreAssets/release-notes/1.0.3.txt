@@ -1,0 +1,14 @@
+<ko-KR>
+• 일부 기기에서 게임 화면이 분홍색으로 보이던 문제를 고쳤어요
+• 음료 등급마다 컵 크기와 모양이 달라져 한눈에 구분돼요
+  연한(뚜껑 없는 컵) → 보통(납작한 뚜껑) → 진한(거품 뚜껑) → 특제(휘핑크림) → 명품(체리·금색 장식)
+• 코스터 색으로도 등급을 알 수 있어요
+• 안정성 개선
+</ko-KR>
+<en-US>
+• Fixed the game screen appearing pink on some devices
+• Each drink grade now has its own cup size and shape
+  Light (no lid) → Regular (flat lid) → Strong (foam lid) → Premium (whipped cream) → Masterpiece (cherry and gold trim)
+• Coaster colors also show the grade
+• Stability improvements
+</en-US>

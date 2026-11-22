@@ -1,0 +1,26 @@
+<ko-KR>
+카페 타워 디펜스 첫 출시!
+
+☕ 음료로 동선을 꼬아 벌레로부터 디저트를 지켜 주세요.
+
+• 딸기·얼음·말차·레몬·블루베리·우유, 6가지 음료
+• 같은 음료를 블렌딩해 등급 UP, 시그니처 메뉴 13종 제작
+• 디저트와 음료를 짝지은 세트 메뉴 7종
+• 개미·파리·바퀴벌레·생쥐 대장이 끝없이 몰려와요
+• 바리스타 레벨업으로 좋은 음료가 나올 확률 UP
+• 두 손가락 확대/축소, 드래그로 이동
+• 일시정지와 1~3배속 지원
+</ko-KR>
+<en-US>
+Cafe Tower Defense is here!
+
+☕ Build a maze of drinks and protect your desserts from bugs.
+
+• 6 drinks: strawberry, ice, matcha, lemon, blueberry and milk
+• Blend matching drinks to upgrade them and craft 13 signature menus
+• 7 set menus pairing a dessert with a drink
+• Ants, flies, roaches and the Mouse Boss keep coming
+• Level up your barista for better drinks
+• Pinch to zoom, drag to pan
+• Pause and 1x–3x speed
+</en-US>

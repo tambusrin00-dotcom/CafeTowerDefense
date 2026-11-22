@@ -1,0 +1,47 @@
+[Short description]
+Build a maze of drinks, stop the bugs and save your desserts in a cozy cafe TD!
+
+[Full description]
+☕ Bugs are sneaking into your cafe to steal the desserts!
+Place drinks on the floor to block their way, blend and craft powerful menus, and keep the dessert display safe.
+
+■ Build your own maze with drinks
+Bugs have to walk around every drink you place. Where you put drinks and empty cups can make their path many times longer. You can never block the path completely, so plan the longest, twistiest route you can.
+
+■ Five drinks per round, keep only one
+Each round you place five random drinks and keep just one. The rest become empty cups that act as walls. Choosing which drink to keep is the key to winning.
+
+■ 6 drinks, 5 grades
+Strawberry · Ice · Matcha · Lemon · Blueberry · Milk
+Light → Regular → Strong → Premium → Masterpiece
+Each drink has its own power: splash damage, slow, damage over time, multi-target, bonus damage against flies or critical hits. Higher grades come in bigger cups with whipped cream and cherries, so you can tell them apart at a glance.
+
+■ Blending and signature recipes
+• 2 matching drinks → blend up one grade
+• 4 matching drinks → double blend up two grades
+• Collect the right ingredients to craft 13 signature menus
+  Iced Frappe, Hot Choco Bomb, Espresso Shot, Sparkling Lemonade, Red Velvet Cake, Macaron Cannon, Affogato, Signature Parfait, Rainbow Cake…
+
+■ Dessert and drink set menus
+Pair a signature dessert with its matching drink to upgrade it into a set menu! Seven sets are waiting, including the Honey Brunch Set, Macaron Party Set and Rainbow Party Set.
+
+■ Endless waves of bugs
+• Ants march along your maze
+• Roaches rush in fast
+• Flies ignore the maze and fly straight in
+• The Mouse Boss is incredibly tough
+Waves keep getting stronger, so collect coins and upgrade your menus.
+
+■ Grow your cafe
+• Level up your barista for better drink grades
+• Upgrade signature menus up to 5 times
+• Move each signature menu once
+• Clear unwanted empty cups with coins
+
+■ Easy controls
+• Pinch to zoom, drag to pan the board
+• Pause and 1x · 2x · 3x speed
+• Hide the info panel for a wider view
+• See which ingredients you already have in the recipe book
+
+Open your cafe and enjoy a cozy strategy defense game! 🍰
