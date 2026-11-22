@@ -39,12 +39,14 @@ namespace CafeTowerDefense
         public static readonly Color BtnRed = C(0xFFC2504A);
         public static readonly Color BtnTeal = C(0xFF3E958C);
         public static readonly Color BtnBlue = C(0xFF4F7FA8);
+        public static readonly Color BtnSet = C(0xFFCF6A55); // 세트 메뉴 (코랄)
 
         static readonly Color[] GradeColors = { C(0xFFC9B8A6), C(0xFF9ED68F), C(0xFF7FC4F0), C(0xFFE3A3F0), C(0xFFFFC163) };
         public static Color GradeColor(Grade q) => GradeColors[(int)q];
 
-        static readonly Color[] TierColors = { C(0xFF7FC4F0), C(0xFFE3A3F0), C(0xFFFFC163) };
-        public static Color Tier(int tier) => TierColors[Mathf.Clamp(tier, 0, 2)];
+        // 기본 · 스페셜 · 마스터 · 세트
+        static readonly Color[] TierColors = { C(0xFF7FC4F0), C(0xFFE3A3F0), C(0xFFFFC163), C(0xFFFF9A85) };
+        public static Color Tier(int tier) => TierColors[Mathf.Clamp(tier, 0, TierColors.Length - 1)];
 
         public static Color Shade(Color c, float f) => new Color(c.r * f, c.g * f, c.b * f, c.a);
         public static Color Alpha(Color c, float a) => new Color(c.r, c.g, c.b, a);
@@ -307,7 +309,9 @@ namespace CafeTowerDefense
             if (height > 0)
             {
                 h.childForceExpandHeight = true;
-                LE(rt, prefH: height);
+                // childForceExpandHeight는 부모에게 '남는 높이를 받아도 됨(flexible 1)'으로도 보고되므로
+                // flexibleHeight 0으로 막아야 지정한 높이 그대로 유지됨
+                LE(rt, prefH: height, minH: height, flexH: 0);
             }
             return rt;
         }

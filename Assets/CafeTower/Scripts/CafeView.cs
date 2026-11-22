@@ -161,15 +161,28 @@ namespace CafeTowerDefense
 
         void CreateMaterials()
         {
-            // 기본 도형의 머티리얼 셰이더 = 현재 파이프라인(URP)의 Lit. 빌드에서도 확실히 포함됨.
+            // URP Lit 머티리얼은 Resources 에셋(CafeLit, CafeGloss)에서 가져옴 → 빌드에 셰이더가 확실히 포함됨.
+            // (예전처럼 기본 큐브의 머티리얼에서 셰이더를 빌려 오면, 휴대폰 빌드에서는 지원되지 않는
+            //  기본 Standard 셰이더가 나와 모든 3D 물체가 분홍색이 됨)
+            var litTemplate = Resources.Load<Material>("CafeLit");
+            var glossTemplate = Resources.Load<Material>("CafeGloss");
+            var rpDefault = UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline != null
+                ? UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline.defaultMaterial
+                : null;
             var tmp = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            litShader = tmp.GetComponent<Renderer>().sharedMaterial.shader;
+            litShader = litTemplate != null ? litTemplate.shader
+                : rpDefault != null ? rpDefault.shader
+                : tmp.GetComponent<Renderer>().sharedMaterial.shader;
+            if (litTemplate == null) Debug.LogWarning("[CafeView] Resources/CafeLit 머티리얼이 없어요. 휴대폰 빌드에서 분홍색으로 보일 수 있어요.");
             Object.DestroyImmediate(tmp);
 
-            lit = new Material(litShader) { name = "Cafe_Lit" };
+            lit = litTemplate != null ? new Material(litTemplate) : new Material(litShader);
+            lit.name = "Cafe_Lit";
             lit.SetFloat("_Smoothness", 0.25f);
 
-            glossMat = new Material(litShader) { name = "Cafe_Gem" };
+            // 발광(_EMISSION) 변형은 에셋 머티리얼(CafeGloss)이 쓰고 있어야 빌드에서 빠지지 않음
+            glossMat = glossTemplate != null ? new Material(glossTemplate) : new Material(litShader);
+            glossMat.name = "Cafe_Gem";
             glossMat.SetFloat("_Smoothness", 0.9f);
             glossMat.EnableKeyword("_EMISSION");
             glossMat.SetColor(EmissionId, Color.black);
@@ -677,26 +690,67 @@ namespace CafeTowerDefense
             tv.Outline = outline.transform;
             tv.OutlineR = outline.GetComponent<Renderer>();
 
-            // 원목 코스터
+            // 원목 코스터. 일반 음료는 안쪽 원판을 등급 색(회색·초록·파랑·보라·주황)으로 칠해 멀리서도 구분
             Prim(PrimitiveType.Cylinder, tr, new Vector3(0f, 0.04f, 0f), new Vector3(0.86f, 0.04f, 0.86f), lit, WoodLight);
-            Prim(PrimitiveType.Cylinder, tr, new Vector3(0f, 0.081f, 0f), new Vector3(0.72f, 0.002f, 0.72f), lit, Color.Lerp(WoodLight, Kraft, 0.55f));
+            var inset = t.Signature.HasValue ? Color.Lerp(WoodLight, Kraft, 0.55f) : Theme.Shade(Theme.GradeColor(t.Grade), 0.85f);
+            Prim(PrimitiveType.Cylinder, tr, new Vector3(0f, 0.0825f, 0f), new Vector3(0.72f, 0.002f, 0.72f), lit, inset);
 
             if (!t.Signature.HasValue)
             {
-                // 테이크아웃 컵: 투명 컵 속 음료 + 종이 슬리브 + 뚜껑 + 빨대. 품질이 높을수록 큰 컵
+                // 등급마다 크기와 모양이 달라지는 컵
+                //   연한: 뚜껑 없는 작은 종이컵 · 보통: 납작한 뚜껑 + 빨대 · 진한: 거품 뚜껑 + 빨대
+                //   특제: 거품 위 휘핑크림 · 명품: 휘핑크림 + 체리, 금색 슬리브와 반짝이
                 int qi = (int)t.Grade;
-                float s = 0.72f + 0.09f * qi;
+                float s = 0.62f + 0.13f * qi; // 0.62 → 1.14 (가장 큰 컵이 가장 작은 컵의 약 1.8배)
                 var cup = new GameObject("Cup").transform;
                 cup.SetParent(tr, false);
                 tv.Item = cup;
                 var drink = Color.Lerp(col, Color.white, 0.1f);
+                var cream = MenuInfo.Argb(0xFFFFF8EE);
+                var goldC = MenuInfo.Argb(0xFFFFC14D);
+                bool hasLid = t.Grade >= Grade.Regular;
+                bool dome = t.Grade >= Grade.Strong;
 
+                // 몸통 + 슬리브 (명품은 금색 슬리브)
                 Prim(PrimitiveType.Cylinder, cup, new Vector3(0f, 0.25f * s, 0f), new Vector3(0.42f * s, 0.25f * s, 0.42f * s), glossMat, drink, 0.3f);
-                Prim(PrimitiveType.Cylinder, cup, new Vector3(0f, 0.2f * s, 0f), new Vector3(0.445f * s, 0.075f * s, 0.445f * s), lit, Kraft);
-                Prim(PrimitiveType.Cylinder, cup, new Vector3(0f, 0.505f * s, 0f), new Vector3(0.47f * s, 0.018f * s, 0.47f * s), lit, Cream);
-                Prim(PrimitiveType.Sphere, cup, new Vector3(0f, 0.525f * s, 0f), new Vector3(0.4f * s, 0.12f * s, 0.4f * s), lit, Cream);
-                var straw = Prim(PrimitiveType.Cylinder, cup, new Vector3(0.05f * s, 0.68f * s, 0f), new Vector3(0.05f, 0.16f * s, 0.05f), glossMat, Theme.Shade(col, 0.8f), 0.25f);
-                straw.transform.localRotation = Quaternion.Euler(0f, 0f, -12f);
+                if (t.Grade == Grade.Masterpiece)
+                    Prim(PrimitiveType.Cylinder, cup, new Vector3(0f, 0.2f * s, 0f), new Vector3(0.445f * s, 0.075f * s, 0.445f * s), glossMat, goldC, 0.6f);
+                else
+                    Prim(PrimitiveType.Cylinder, cup, new Vector3(0f, 0.2f * s, 0f), new Vector3(0.445f * s, 0.075f * s, 0.445f * s), lit, Kraft);
+
+                if (!hasLid)
+                {
+                    // 연한: 뚜껑 없이 종이컵 테두리와 음료 표면이 보임
+                    Prim(PrimitiveType.Cylinder, cup, new Vector3(0f, 0.5f * s, 0f), new Vector3(0.45f * s, 0.012f * s, 0.45f * s), lit, MenuInfo.Argb(0xFFF3E6D3));
+                    Prim(PrimitiveType.Cylinder, cup, new Vector3(0f, 0.505f * s, 0f), new Vector3(0.38f * s, 0.01f * s, 0.38f * s), glossMat, Theme.Shade(drink, 0.9f), 0.4f);
+                }
+                else
+                {
+                    // 뚜껑 테두리 (음료색보다 살짝 진하게)
+                    Prim(PrimitiveType.Cylinder, cup, new Vector3(0f, 0.505f * s, 0f), new Vector3(0.47f * s, 0.018f * s, 0.47f * s), lit, Theme.Shade(drink, 0.8f));
+                    if (dome) // 거품(돔): 음료색
+                        Prim(PrimitiveType.Sphere, cup, new Vector3(0f, 0.525f * s, 0f), new Vector3(0.4f * s, 0.12f * s, 0.4f * s), glossMat, drink, 0.35f);
+                    else      // 보통: 납작한 뚜껑
+                        Prim(PrimitiveType.Cylinder, cup, new Vector3(0f, 0.53f * s, 0f), new Vector3(0.4f * s, 0.012f * s, 0.4f * s), glossMat, drink, 0.35f);
+
+                    float strawY = dome ? 0.68f : 0.64f;
+                    var straw = Prim(PrimitiveType.Cylinder, cup, new Vector3(0.05f * s, strawY * s, 0f), new Vector3(0.05f, 0.16f * s, 0.05f), glossMat, Theme.Shade(col, 0.8f), 0.25f);
+                    straw.transform.localRotation = Quaternion.Euler(0f, 0f, -12f);
+                }
+
+                if (t.Grade >= Grade.Premium)
+                {
+                    // 휘핑크림: 아래가 넓고 위로 갈수록 좁아지는 소용돌이
+                    Prim(PrimitiveType.Sphere, cup, new Vector3(-0.02f * s, 0.6f * s, 0f), new Vector3(0.3f * s, 0.12f * s, 0.3f * s), glossMat, cream, 0.3f);
+                    Prim(PrimitiveType.Sphere, cup, new Vector3(-0.02f * s, 0.67f * s, 0f), new Vector3(0.2f * s, 0.1f * s, 0.2f * s), glossMat, cream, 0.3f);
+                    Prim(PrimitiveType.Sphere, cup, new Vector3(-0.02f * s, 0.73f * s, 0f), new Vector3(0.1f * s, 0.08f * s, 0.1f * s), glossMat, cream, 0.3f);
+                }
+                if (t.Grade == Grade.Masterpiece)
+                {
+                    // 체리 + 등급 원판 바로 아래에 깐 빛나는 금빛 테두리 (원판보다 살짝 커서 가장자리만 보임)
+                    Prim(PrimitiveType.Sphere, cup, new Vector3(-0.02f * s, 0.8f * s, 0f), Vector3.one * 0.09f * s, glossMat, MenuInfo.Argb(0xFFE0283C), 0.5f);
+                    Prim(PrimitiveType.Cylinder, tr, new Vector3(0f, 0.0805f, 0f), new Vector3(0.8f, 0.001f, 0.8f), glossMat, goldC, 1.2f, false);
+                }
 
                 // 품질 = 코스터 앞쪽의 금빛 원두 개수 (앞쪽 = 카메라 쪽 = -Z)
                 int n = qi + 1;
@@ -730,6 +784,27 @@ namespace CafeTowerDefense
                     var p = new Vector3(Mathf.Cos(a) * 0.15f, 0f, Mathf.Sin(a) * 0.15f);
                     Prim(PrimitiveType.Cylinder, cake, p + new Vector3(0f, 0.5f, 0f), new Vector3(0.035f, 0.05f, 0.035f), lit, MenuInfo.Argb(0xFFFFB3CF), 0f, false);
                     Prim(PrimitiveType.Sphere, cake, p + new Vector3(0f, 0.58f, 0f), new Vector3(0.04f, 0.06f, 0.04f), glossMat, MenuInfo.Argb(0xFFFFC850), 2f, false);
+                }
+
+                // 세트 메뉴: 케이크를 왼쪽으로 옮기고 오른쪽 앞에 음료 컵을 곁들임 + 접시에 빛나는 코랄 테두리
+                if (MenuDB.IsSet(t.Signature.Value))
+                {
+                    var set = MenuDB.SetFor(t.Signature.Value);
+                    cake.localPosition = new Vector3(-0.12f, 0.11f, 0.06f);
+                    cake.localScale = Vector3.one * 0.82f;
+                    Prim(PrimitiveType.Cylinder, tr, new Vector3(0f, 0.095f, 0f), new Vector3(0.88f, 0.012f, 0.88f), glossMat, Theme.Tier(MenuDB.SetTier), 0.8f, false);
+
+                    var drink = Color.Lerp(set.Drink.Flavor.Color(), Color.white, 0.1f);
+                    var cup = new GameObject("SetDrink").transform;
+                    cup.SetParent(tr, false);
+                    cup.localPosition = new Vector3(0.24f, 0.11f, -0.16f);
+                    const float s = 0.55f;
+                    Prim(PrimitiveType.Cylinder, cup, new Vector3(0f, 0.25f * s, 0f), new Vector3(0.42f * s, 0.25f * s, 0.42f * s), glossMat, drink, 0.3f);
+                    Prim(PrimitiveType.Cylinder, cup, new Vector3(0f, 0.2f * s, 0f), new Vector3(0.445f * s, 0.075f * s, 0.445f * s), lit, Kraft);
+                    Prim(PrimitiveType.Cylinder, cup, new Vector3(0f, 0.505f * s, 0f), new Vector3(0.47f * s, 0.018f * s, 0.47f * s), lit, Theme.Shade(drink, 0.8f));
+                    Prim(PrimitiveType.Sphere, cup, new Vector3(0f, 0.525f * s, 0f), new Vector3(0.4f * s, 0.12f * s, 0.4f * s), glossMat, drink, 0.35f);
+                    var straw = Prim(PrimitiveType.Cylinder, cup, new Vector3(0.05f * s, 0.68f * s, 0f), new Vector3(0.04f, 0.16f * s, 0.04f), glossMat, Theme.Shade(drink, 0.8f), 0.25f);
+                    straw.transform.localRotation = Quaternion.Euler(0f, 0f, -12f);
                 }
             }
             AddPop(tr);

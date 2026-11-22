@@ -29,6 +29,13 @@ namespace CafeTowerDefense
 
         public bool Interactable => Enabled == null || Enabled();
 
+        /// <summary>버튼 높이가 낮아도 글자가 자동으로 줄어들지 않게 고정</summary>
+        public void KeepFontSize()
+        {
+            label.resizeTextForBestFit = false;
+            label.verticalOverflow = VerticalWrapMode.Overflow;
+        }
+
         public void Init(Button b, Image lipImage, Image faceImg, Text text, Color color)
         {
             button = b;

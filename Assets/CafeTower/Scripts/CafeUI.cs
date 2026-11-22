@@ -205,7 +205,8 @@ namespace CafeTowerDefense
             Ui.Shadowed(tt, 0.5f, 2f);
 
             // 상태 칩
-            var chips = Ui.Row(panel, 10, 70, true);
+            // 높이 절반 (70 → 35). 이름과 숫자를 한 줄에 나란히 놓아 글자 크기는 유지
+            var chips = Ui.Row(panel, 8, 35, true);
             waveValue = Chip(chips, Ui.Bug, Theme.Dim, "웨이브", out _);
             livesValue = Chip(chips, Ui.Cake, Theme.Red, "디저트", out livesChip);
             goldValue = Chip(chips, Ui.Coin, Theme.Gold, "코인", out _);
@@ -216,13 +217,28 @@ namespace CafeTowerDefense
 
             // 하단 버튼 (간략 버튼 열과 같은 행동 목록 사용)
             Ui.Divider(panel);
+
+            // 바리스타 레벨업: 스크롤하지 않아도 늘 보이도록 고정 영역 맨 위에 크게 둠
+            // 높이 78
+            var lv = Ui.Button(panel, "", Theme.BtnGold, () => G.UpgradeBarista(),
+                () => G.BaristaLevel < MenuDB.MaxBaristaLevel && G.Coins >= MenuDB.BaristaLevelCost(G.BaristaLevel) && !G.IsOver,
+                26, 78);
+            lv.DynLabel = () => G.BaristaLevel < MenuDB.MaxBaristaLevel
+                ? $"바리스타 레벨업  ·  {MenuDB.BaristaLevelCost(G.BaristaLevel)}코인"
+                : "바리스타 최고 레벨";
+
+            // 정지·배속: 글자(21)가 들어가는 높이
             var speedRow = Ui.Row(panel, 8, 52, true);
-            foreach (var a in new[] { Act.Pause, Act.Speed1, Act.Speed2, Act.Speed3 }) ActButton(speedRow, a, false, 52, 21);
-            var row2 = Ui.Row(panel, 8, 56, true);
-            ActButton(row2, Act.Recipes, false, 56, 22);
-            ActButton(row2, Act.NewGame, false, 56, 22);
-            var row3 = Ui.Row(panel, 8, 48, true);
-            foreach (var a in new[] { Act.ZoomOut, Act.ZoomFit, Act.ZoomIn }) ActButton(row3, a, false, 48, 19);
+            foreach (var a in new[] { Act.Pause, Act.Speed1, Act.Speed2, Act.Speed3 }) ActButton(speedRow, a, false, 52, 21).KeepFontSize();
+
+            // 레시피·새 영업: 글자(22)가 들어가는 높이
+            var row2 = Ui.Row(panel, 8, 54, true);
+            ActButton(row2, Act.Recipes, false, 54, 22).KeepFontSize();
+            ActButton(row2, Act.NewGame, false, 54, 22).KeepFontSize();
+
+            // 축소·전체 보기·확대: 글자(19)가 들어가는 높이
+            var row3 = Ui.Row(panel, 8, 50, true);
+            foreach (var a in new[] { Act.ZoomOut, Act.ZoomFit, Act.ZoomIn }) ActButton(row3, a, false, 50, 19).KeepFontSize();
 
             // 패널 왼쪽 가장자리에 붙은 숨기기 탭
             var tab = ActButton(ct, Act.TogglePanel, false, 0, 24);
@@ -251,7 +267,7 @@ namespace CafeTowerDefense
 
             // 상태 정보 상자
             var box = Ui.Card(col, Theme.Card, 10, 8).transform;
-            StatusLine(box, Ui.Bug, Theme.Dim, () => $"{G.Wave}<size=14><color=#{Theme.Hex(Theme.Hint)}>/{Cafe.MaxWave}</color></size>");
+            StatusLine(box, Ui.Bug, Theme.Dim, () => $"{G.Wave}");
             StatusLine(box, Ui.Cake, Theme.Red, () => G.Desserts.ToString());
             StatusLine(box, Ui.Coin, Theme.Gold, () => $"{G.Coins:N0}");
 
@@ -332,14 +348,17 @@ namespace CafeTowerDefense
         {
             bg = Ui.Img(parent, Theme.Card, Ui.Round, "Chip");
             bg.raycastTarget = false;
-            Ui.H(bg.gameObject, Ui.Pad(14, 10, 8, 8), 10, TextAnchor.MiddleLeft);
+            // [아이콘] 이름 ······ 숫자 (한 줄)
+            // 칩 영역 높이는 35(원래 70의 절반), 아이콘·글자 크기는 원래대로 (아이콘 30, 이름 15, 숫자 25)
+            Ui.H(bg.gameObject, Ui.Pad(10, 10, 2, 2), 6, TextAnchor.MiddleLeft);
             Ui.LE(bg, flexW: 1);
             Ui.Icon(bg.transform, icon, color, 30);
-            var col = Ui.Column(bg.transform, 0);
-            Ui.LE(col, flexW: 1);
-            Ui.Txt(col, caption, 15, Theme.Dim);
-            var v = Ui.Txt(col, "", 25, Theme.Text, true);
+            var cap = Ui.Txt(bg.transform, caption, 15, Theme.Dim, false, TextAnchor.MiddleLeft);
+            cap.horizontalOverflow = HorizontalWrapMode.Overflow;
+            var v = Ui.Txt(bg.transform, "", 25, Theme.Text, true, TextAnchor.MiddleRight);
             v.horizontalOverflow = HorizontalWrapMode.Overflow;
+            v.verticalOverflow = VerticalWrapMode.Overflow;
+            Ui.LE(v, flexW: 1);
             return v;
         }
 
@@ -397,8 +416,10 @@ namespace CafeTowerDefense
             string sub;
             if (t.Signature.HasValue)
             {
-                int tier = MenuDB.RecipeFor(t.Signature.Value).Tier;
-                sub = Theme.Paint($"시그니처 · {MenuDB.TierNames[tier]}", Theme.Tier(tier));
+                int tier = MenuDB.TierOf(t.Signature.Value);
+                sub = tier == MenuDB.SetTier
+                    ? Theme.Paint("세트 메뉴", Theme.Tier(tier))
+                    : Theme.Paint($"시그니처 · {MenuDB.TierNames[tier]}", Theme.Tier(tier));
                 if (t.SignatureLevel > 0) sub += $"  ·  강화 {t.SignatureLevel}/{MenuDB.MaxSignatureLevel}";
             }
             else
@@ -435,6 +456,12 @@ namespace CafeTowerDefense
                     if (G.FindRecipeParts(t, r) == null) continue;
                     var rr = r;
                     Ui.Button(card, $"시그니처 레시피 → {r.Result.Label()}", Theme.BtnPurple, () => G.MakeSignature(t, rr));
+                }
+                foreach (var sr in MenuDB.SetRecipes)
+                {
+                    if (G.FindSetDessert(t, sr) == null) continue;
+                    var srr = sr;
+                    Ui.Button(card, $"세트 메뉴 → {sr.Result.Label()}", Theme.BtnSet, () => G.MakeSet(t, srr));
                 }
             }
 
@@ -476,8 +503,22 @@ namespace CafeTowerDefense
             }
             if (!t.Signature.HasValue)
             {
-                var uses = MenuDB.RecipesUsing(new DrinkKey(t.Flavor, t.Grade));
+                var key = new DrinkKey(t.Flavor, t.Grade);
+                var uses = MenuDB.RecipesUsing(key);
                 if (uses.Count > 0) Ui.KeyValue(card, "재료로 쓰임", string.Join(", ", uses.Select(u => u.Result.Label())), Theme.Purple, 17);
+                var sets = MenuDB.SetsUsingDrink(key);
+                if (sets.Count > 0)
+                    Ui.KeyValue(card, "세트 음료", string.Join(", ", sets.Select(s => $"{s.Result.Label()} ({s.Dessert.Label()}와 함께)")), Theme.Tier(MenuDB.SetTier), 17);
+            }
+            else if (MenuDB.SetUsingDessert(t.Signature.Value) is SetRecipe setR)
+            {
+                // 이 디저트로 만들 수 있는 세트 안내
+                Ui.KeyValue(card, "세트 메뉴", $"{setR.Result.Label()} = 이 디저트 + {setR.Drink}", Theme.Tier(MenuDB.SetTier), 17);
+            }
+            else if (MenuDB.IsSet(t.Signature.Value))
+            {
+                var sr = MenuDB.SetFor(t.Signature.Value);
+                Ui.KeyValue(card, "구성", $"{sr.Dessert.Label()} + {sr.Drink}", Theme.Tier(MenuDB.SetTier), 17);
             }
         }
 
@@ -596,13 +637,9 @@ namespace CafeTowerDefense
             ChanceBar(card, G.BaristaLevel, 18);
             Ui.Txt(card, ChanceLegend(G.BaristaLevel), 16, Theme.Dim);
 
+            // 레벨업 버튼은 패널 아래쪽 고정 영역(확대 버튼 줄 위)에 있음
             if (G.BaristaLevel < MenuDB.MaxBaristaLevel)
-            {
                 Ui.Txt(card, "다음 레벨  " + ChanceLegend(G.BaristaLevel + 1), 15, Theme.Hint);
-                int cost = MenuDB.BaristaLevelCost(G.BaristaLevel);
-                Ui.Button(card, $"바리스타 레벨업  ·  {cost}코인", Theme.BtnGold, () => G.UpgradeBarista(),
-                    () => G.Coins >= cost && !G.IsOver);
-            }
         }
 
         static void ChanceBar(Transform parent, int level, float height)
@@ -727,14 +764,14 @@ namespace CafeTowerDefense
 
             var head = Ui.Row(card.transform, 12);
             Ui.Icon(head, Ui.Cake, Theme.Purple, 34);
-            var title = Ui.Txt(head, $"시그니처 레시피  ·  {MenuDB.Recipes.Count}종", 31, Theme.Text, true);
+            var title = Ui.Txt(head, $"레시피  ·  시그니처 {MenuDB.Recipes.Count}종 + 세트 {MenuDB.SetRecipes.Count}종", 31, Theme.Text, true);
             title.horizontalOverflow = HorizontalWrapMode.Overflow;
             Ui.Spacer(head);
             Ui.Tag(head, "● 매장에 있는 재료", MenuInfo.Argb(0xFF1C3A2A), Theme.Green, 16);
             var cb = Ui.Button(head, "닫기", Theme.BtnNeutral, () => ShowRecipes = false, null, 20, 48);
             Ui.LE(cb, prefW: 120, minW: 120);
 
-            Ui.Txt(card.transform, "재료 음료가 매장에 모두 있고 그중 하나가 이번 라운드 음료면, 선택 단계에서 그 음료를 눌러 시그니처 메뉴를 만들 수 있어요. 이미 남긴 재료 음료는 빈 컵이 돼요.", 18, Theme.Dim);
+            Ui.Txt(card.transform, "재료 음료가 매장에 모두 있고 그중 하나가 이번 라운드 음료면, 선택 단계에서 그 음료를 눌러 시그니처 메뉴를 만들 수 있어요. 이미 남긴 재료 음료는 빈 컵이 돼요. 세트 메뉴는 시그니처 디저트가 매장에 있을 때 짝이 되는 음료를 눌러 만들어요.", 18, Theme.Dim);
 
             recipeScroll = Ui.Scroll(card.transform, out recipeContent, Ui.Pad(0, 6, 4, 4), 10);
             Ui.LE(recipeScroll, flexH: 1);
@@ -757,15 +794,34 @@ namespace CafeTowerDefense
                 Ui.Tag(th, MenuDB.TierNames[tier], Theme.Tier(tier), Theme.Bg, 18);
                 Ui.Txt(th, tierDesc, 18, Theme.Dim).horizontalOverflow = HorizontalWrapMode.Overflow;
 
-                foreach (var r in list) RecipeCard(p, r);
+                foreach (var r in list)
+                    RecipeCard(p, r.Result, r.Parts.Select(part =>
+                        (part.ToString(), Ui.Cup, (Color)part.Flavor.Color(), G.HasDrinkInCafe(part))).ToArray());
+            }
+
+            // 세트 메뉴
+            Ui.Gap(p, 6);
+            var sh = Ui.Row(p, 10);
+            Ui.Tag(sh, MenuDB.TierNames[MenuDB.SetTier], Theme.Tier(MenuDB.SetTier), Theme.Bg, 18);
+            Ui.Txt(sh, "매장의 시그니처 디저트 + 이번 라운드 음료 1잔 · 디저트 자리가 세트로 바뀌고 강화 단계는 유지",
+                18, Theme.Dim).horizontalOverflow = HorizontalWrapMode.Overflow;
+            foreach (var sr in MenuDB.SetRecipes)
+            {
+                var dessertColor = (Color)MenuDB.SignatureStats(sr.Dessert).Color;
+                RecipeCard(p, sr.Result, new[]
+                {
+                    (sr.Dessert.Label(), Ui.Cake, dessertColor, G.HasSignatureInCafe(sr.Dessert)),
+                    (sr.Drink.ToString(), Ui.Cup, (Color)sr.Drink.Flavor.Color(), G.HasDrinkInCafe(sr.Drink)),
+                });
             }
         }
 
-        void RecipeCard(Transform parent, Recipe r)
+        /// <summary>레시피 카드 한 장. parts = (재료 이름, 아이콘, 색, 지금 매장에 있는지)</summary>
+        void RecipeCard(Transform parent, SignatureMenu result, (string label, Sprite icon, Color color, bool owned)[] parts)
         {
-            var s = MenuDB.SignatureStats(r.Result);
+            var s = MenuDB.SignatureStats(result);
             Color sc = s.Color;
-            var owned = r.Parts.Select(G.HasDrinkInCafe).ToArray();
+            var owned = parts.Select(x => x.owned).ToArray();
             bool ready = owned.All(o => o);
 
             var card = Ui.Img(parent, ready ? Theme.CardHi : Theme.Card, Ui.Round, "Recipe");
@@ -780,19 +836,19 @@ namespace CafeTowerDefense
 
             var nameRow = Ui.Row(col, 10);
             Ui.Icon(nameRow, Ui.Circle, sc, 22);
-            Ui.Txt(nameRow, r.Result.Label(), 24, sc, true).horizontalOverflow = HorizontalWrapMode.Overflow;
+            Ui.Txt(nameRow, result.Label(), 24, sc, true).horizontalOverflow = HorizontalWrapMode.Overflow;
             Ui.Spacer(nameRow);
             if (ready) Ui.Tag(nameRow, "재료 준비 완료", Theme.Green, Theme.Bg, 16);
 
             var chips = Ui.Row(col, 8);
-            for (int i = 0; i < r.Parts.Length; i++)
+            for (int i = 0; i < parts.Length; i++)
             {
-                var part = r.Parts[i];
+                var part = parts[i];
                 var chip = Ui.Img(chips, owned[i] ? MenuInfo.Argb(0xFF1C3A2A) : Theme.Inset, Ui.Pill, "Part");
                 chip.raycastTarget = false;
                 Ui.H(chip.gameObject, Ui.Pad(10, 14, 6, 7), 6, TextAnchor.MiddleLeft);
-                Ui.Icon(chip.transform, Ui.Cup, Theme.Alpha(part.Flavor.Color(), owned[i] ? 1f : 0.45f), 18);
-                var pt = Ui.Txt(chip.transform, part.ToString(), 18, owned[i] ? Theme.Green : Theme.Dim, owned[i]);
+                Ui.Icon(chip.transform, part.icon, Theme.Alpha(part.color, owned[i] ? 1f : 0.45f), 18);
+                var pt = Ui.Txt(chip.transform, part.label, 18, owned[i] ? Theme.Green : Theme.Dim, owned[i]);
                 pt.horizontalOverflow = HorizontalWrapMode.Overflow;
             }
 
@@ -900,7 +956,7 @@ namespace CafeTowerDefense
             goldPunch = Mathf.Max(0f, goldPunch - dt * 5f);
             livesFlash = Mathf.Max(0f, livesFlash - dt * 2f);
 
-            waveValue.text = $"{G.Wave}<size=17><color=#{Theme.Hex(Theme.Hint)}> / {Cafe.MaxWave}</color></size>";
+            waveValue.text = $"{G.Wave}";
             livesValue.text = G.Desserts.ToString();
             goldValue.text = $"{G.Coins:N0}";
             goldValue.rectTransform.localScale = Vector3.one * (1f + goldPunch * 0.18f);
@@ -972,9 +1028,9 @@ namespace CafeTowerDefense
                     bool win = G.State == GameState.Victory;
                     overTitle.text = win ? "영업 성공!" : "오늘은 폐점";
                     overTitle.color = win ? Theme.Gold : Theme.Text;
-                    overSub.text = win ? $"{Cafe.MaxWave}개의 웨이브를 모두 막아냈어요" : "디저트를 모두 빼앗겼어요";
+                    overSub.text = win ? "모든 웨이브를 막아냈어요" : "디저트를 모두 빼앗겼어요";
                     Ui.Clear(overStats);
-                    Ui.KeyValue(overStats, "도달 웨이브", $"{G.Wave} / {Cafe.MaxWave}", Theme.Text, 22);
+                    Ui.KeyValue(overStats, "도달 웨이브", $"{G.Wave}", Theme.Text, 22);
                     Ui.KeyValue(overStats, "남은 디저트", $"{G.Desserts}", G.Desserts > 0 ? Theme.Green : Theme.Red, 22);
                     Ui.KeyValue(overStats, "보유 코인", $"{G.Coins:N0}", Theme.Gold, 22);
                 }

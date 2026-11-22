@@ -232,7 +232,8 @@ namespace CafeTowerDefense
         public const int W = 19;
         public const int H = 19;
         public const int DrinksPerRound = 5;
-        public const int MaxWave = 30;
+        /// <summary>마지막 웨이브. 화면에는 표시하지 않음.</summary>
+        public const int MaxWave = 1000;
         public const int StartDesserts = 20;
         public const int CupClearCost = 10;
         public const int MoveCost = 15;
@@ -654,6 +655,55 @@ namespace CafeTowerDefense
             FinishRound(t);
         }
 
+        // ------------------------------------------------------------------ 세트 메뉴
+
+        /// <summary>매장에 이 시그니처 메뉴가 있는지. 레시피 창 표시용.</summary>
+        public bool HasSignatureInCafe(SignatureMenu k)
+        {
+            for (int x = 0; x < W; x++)
+            for (int y = 0; y < H; y++)
+                if (towers[x, y] != null && towers[x, y].Signature == k) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// 세트 메뉴의 디저트를 찾음. drink는 이번 라운드의 재료 음료여야 하고,
+        /// 매장에 레시피의 시그니처 디저트가 있어야 함. 없으면 null.
+        /// </summary>
+        public MenuTower FindSetDessert(MenuTower drink, SetRecipe r)
+        {
+            if (State != GameState.BuildChoose || !RoundDrinks.Contains(drink) || drink.Signature.HasValue) return null;
+            if (drink.Flavor != r.Drink.Flavor || drink.Grade != r.Drink.Grade) return null;
+            for (int x = 0; x < W; x++)
+            for (int y = 0; y < H; y++)
+            {
+                var o = towers[x, y];
+                if (o != null && o.Kept && o.Signature == r.Dessert) return o;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// 디저트 자리를 세트 메뉴로 바꿈 (강화 단계 유지). 음료는 디저트에 곁들여져 사라지고
+        /// 이번 라운드의 다른 음료는 평소처럼 빈 컵이 됨. 그다음 웨이브 시작.
+        /// </summary>
+        public void MakeSet(MenuTower drink, SetRecipe r)
+        {
+            var dessert = FindSetDessert(drink, r);
+            if (dessert == null) return;
+            MovingFrom = null;
+            foreach (var g in RoundDrinks) SetEmptyCup(g.Cell);
+            RoundDrinks.Clear();
+            int level = dessert.SignatureLevel;
+            dessert.SetMenu(dessert.Flavor, dessert.Grade, r.Result);
+            dessert.SignatureLevel = level;
+            dessert.Refresh();
+            Selected = dessert.Cell;
+            ShowMessage($"세트 메뉴 완성: {dessert.Stats.Name}");
+            RecalcPath();
+            StartWave();
+        }
+
         void FinishRound(MenuTower chosen)
         {
             if (State != GameState.BuildChoose || !RoundDrinks.Contains(chosen)) return;
@@ -693,7 +743,8 @@ namespace CafeTowerDefense
 
         public WaveInfo WaveInfoFor(int w)
         {
-            float hp = 15f * Mathf.Pow(1.21f, w - 1) + 4f * w;
+            // 웨이브마다 21%씩 늘어나 460웨이브쯤부터 float 범위를 넘으므로 상한을 둠 (무한대가 되면 체력바가 깨짐)
+            float hp = Mathf.Min(15f * Mathf.Pow(1.21f, w - 1) + 4f * w, 1e30f);
             int bounty = 1 + w / 4;
             if (w % 10 == 0)
                 return new WaveInfo { Count = 1, Hp = hp * 8f, Speed = 1.1f, Interval = 1f, Bounty = 20 + w, Leak = 5, Boss = true, Label = "생쥐 대장" };

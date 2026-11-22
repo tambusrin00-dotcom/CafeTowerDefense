@@ -17,6 +17,8 @@ namespace CafeTowerDefense
         MacaronCannon, MatchaBingsu, Affogato,
         // 상급
         SignatureParfait, RainbowCake,
+        // 세트 메뉴 (시그니처 디저트 + 음료)
+        HoneyBrunchSet, PuddingIceSet, RedVelvetTeaSet, MacaronPartySet, MatchaDessertSet, ParfaitSpecialSet, RainbowPartySet,
     }
 
     public static class MenuInfo
@@ -32,6 +34,8 @@ namespace CafeTowerDefense
         {
             "아이스 프라페", "말차 라떼", "핫초코 폭탄", "에스프레소 샷", "탄산 레모네이드", "허니 브레드", "탱글 푸딩", "레드벨벳 케이크",
             "마카롱 대포", "말차 빙수", "아포가토", "시그니처 파르페", "레인보우 케이크",
+            "허니 브런치 세트", "푸딩 아이스 세트", "레드벨벳 티타임 세트", "마카롱 파티 세트", "말차 디저트 세트",
+            "파르페 스페셜 세트", "레인보우 파티 세트",
         };
 
         public static string Label(this Flavor t) => TypeLabels[(int)t];
@@ -113,6 +117,24 @@ namespace CafeTowerDefense
         }
     }
 
+    /// <summary>
+    /// 세트 메뉴 레시피: 매장에 있는 시그니처 디저트(Dessert) + 이번 라운드 음료(Drink) 1잔.
+    /// 디저트 자리가 세트 메뉴로 바뀌고 음료는 디저트에 곁들여져 사라짐.
+    /// </summary>
+    public class SetRecipe
+    {
+        public readonly SignatureMenu Result;
+        public readonly SignatureMenu Dessert;
+        public readonly DrinkKey Drink;
+
+        public SetRecipe(SignatureMenu result, SignatureMenu dessert, DrinkKey drink)
+        {
+            Result = result;
+            Dessert = dessert;
+            Drink = drink;
+        }
+    }
+
     /// <summary>음료 수치 / 확률표 / 조합법. 밸런스 조절은 여기서.</summary>
     public static class MenuDB
     {
@@ -139,7 +161,8 @@ namespace CafeTowerDefense
         public const int MaxSignatureLevel = 5;
         public static int SignatureUpgradeCost(int level) => 60 + 60 * level;
 
-        public static readonly string[] TierNames = { "기본", "스페셜", "마스터" };
+        public static readonly string[] TierNames = { "기본", "스페셜", "마스터", "세트" };
+        public const int SetTier = 3;
 
         static DrinkKey K(Flavor t, Grade q) => new DrinkKey(t, q);
         const Grade C = Grade.Light;
@@ -170,8 +193,32 @@ namespace CafeTowerDefense
 
         public static Recipe RecipeFor(SignatureMenu k) => Recipes.First(r => r.Result == k);
 
-        /// <summary>이 음료이 재료로 들어가는 조합법</summary>
+        /// <summary>이 음료가 재료로 들어가는 조합법</summary>
         public static List<Recipe> RecipesUsing(DrinkKey key) => Recipes.Where(r => r.Parts.Contains(key)).ToList();
+
+        // ---- 세트 메뉴: 디저트 단계에 맞춰 진한(기본) → 특제(스페셜) → 명품(마스터) 음료가 필요
+        public static readonly List<SetRecipe> SetRecipes = new List<SetRecipe>
+        {
+            new SetRecipe(SignatureMenu.HoneyBrunchSet, SignatureMenu.HoneyBread, K(Flavor.Milk, N)),
+            new SetRecipe(SignatureMenu.PuddingIceSet, SignatureMenu.JellyPudding, K(Flavor.Ice, N)),
+            new SetRecipe(SignatureMenu.RedVelvetTeaSet, SignatureMenu.RedVelvetCake, K(Flavor.Strawberry, N)),
+            new SetRecipe(SignatureMenu.MacaronPartySet, SignatureMenu.MacaronCannon, K(Flavor.Blueberry, FL)),
+            new SetRecipe(SignatureMenu.MatchaDessertSet, SignatureMenu.MatchaBingsu, K(Flavor.Matcha, FL)),
+            new SetRecipe(SignatureMenu.ParfaitSpecialSet, SignatureMenu.SignatureParfait, K(Flavor.Lemon, P)),
+            new SetRecipe(SignatureMenu.RainbowPartySet, SignatureMenu.RainbowCake, K(Flavor.Strawberry, P)),
+        };
+
+        public static bool IsSet(SignatureMenu k) => k >= SignatureMenu.HoneyBrunchSet;
+        public static SetRecipe SetFor(SignatureMenu k) => SetRecipes.First(r => r.Result == k);
+
+        /// <summary>이 음료가 곁들여지는 세트 메뉴</summary>
+        public static List<SetRecipe> SetsUsingDrink(DrinkKey key) => SetRecipes.Where(r => r.Drink.Equals(key)).ToList();
+
+        /// <summary>이 디저트로 만들 수 있는 세트 메뉴 (없으면 null)</summary>
+        public static SetRecipe SetUsingDessert(SignatureMenu dessert) => SetRecipes.FirstOrDefault(r => r.Dessert == dessert);
+
+        /// <summary>0 기본 · 1 스페셜 · 2 마스터 · 3 세트</summary>
+        public static int TierOf(SignatureMenu k) => IsSet(k) ? SetTier : RecipeFor(k).Tier;
 
         public static Grade RollQuality(int level, System.Random rng)
         {
@@ -289,10 +336,47 @@ namespace CafeTowerDefense
                         SplashRadius = 2.2f, SplashPct = 0.6f, CritChance = 0.3f, CritMult = 3f,
                         Desc = "카페 최고의 메뉴. 모든 벌레를 녹여버려요." };
                     break;
-                default: // RainbowCake
+                case SignatureMenu.RainbowCake:
                     b = new MenuStats { Name = n, Color = MenuInfo.Argb(0xFFE040FB), Damage = 900f, Range = 5.5f, Cooldown = 0.7f,
                         ChainCount = 6, ChainRange = 3f, ChainPct = 0.85f, PoisonDps = 400f, PoisonDur = 4f, AirMult = 2f,
                         Desc = "무지개 크림이 6번 튕기며 계속 피해를 줘요." };
+                    break;
+
+                // ---- 세트 메뉴: 디저트 능력을 크게 키우고 곁들인 음료의 특징을 더함
+                case SignatureMenu.HoneyBrunchSet: // 허니 브레드 + 진한 우유(치명타)
+                    b = new MenuStats { Name = n, Color = MenuInfo.Argb(0xFFFFC14D), Damage = 220f, Range = 4f, Cooldown = 0.7f,
+                        Targets = 3, BountyBonus = 5, CritChance = 0.25f, CritMult = 2.5f,
+                        Desc = "꿀과 우유의 브런치. 잡은 벌레마다 코인을 5 더 줘요." };
+                    break;
+                case SignatureMenu.PuddingIceSet: // 탱글 푸딩 + 진한 얼음(둔화)
+                    b = new MenuStats { Name = n, Color = MenuInfo.Argb(0xFFBDE8FF), Damage = 260f, Range = 4.2f, Cooldown = 0.9f,
+                        StunChance = 0.35f, StunDur = 1.3f, SlowPct = 0.45f, SlowDur = 2.5f, SplashRadius = 1.6f, SplashPct = 0.5f,
+                        Desc = "차가운 푸딩에 갇힌 벌레가 꼼짝 못 해요." };
+                    break;
+                case SignatureMenu.RedVelvetTeaSet: // 레드벨벳 케이크 + 진한 딸기(범위)
+                    b = new MenuStats { Name = n, Color = MenuInfo.Argb(0xFFE0465E), Damage = 480f, Range = 3.8f, Cooldown = 0.85f,
+                        SplashRadius = 1.8f, SplashPct = 0.6f, ExecutePct = 0.25f,
+                        Desc = "빈사 상태의 벌레를 넓은 범위에서 처치해요." };
+                    break;
+                case SignatureMenu.MacaronPartySet: // 마카롱 대포 + 특제 블루베리(파리)
+                    b = new MenuStats { Name = n, Color = MenuInfo.Argb(0xFFFFB3DA), Damage = 900f, Range = 6.8f, Cooldown = 1.2f,
+                        SplashRadius = 2.2f, SplashPct = 0.65f, AirMult = 3f,
+                        Desc = "하늘까지 닿는 마카롱 폭격. 파리에 아주 강해요." };
+                    break;
+                case SignatureMenu.MatchaDessertSet: // 말차 빙수 + 특제 말차(지속 피해)
+                    b = new MenuStats { Name = n, Color = MenuInfo.Argb(0xFF6FCF7A), Damage = 380f, Range = 4.6f, Cooldown = 0.75f,
+                        PoisonDps = 650f, PoisonDur = 4f, Targets = 5, SlowPct = 0.25f, SlowDur = 2f,
+                        Desc = "다섯 마리에게 아주 진한 말차를 퍼부어요." };
+                    break;
+                case SignatureMenu.ParfaitSpecialSet: // 시그니처 파르페 + 명품 레몬(동시 공격)
+                    b = new MenuStats { Name = n, Color = MenuInfo.Argb(0xFFFFF0B8), Damage = 4200f, Range = 5.5f, Cooldown = 0.95f,
+                        SplashRadius = 2.5f, SplashPct = 0.65f, CritChance = 0.35f, CritMult = 3f, Targets = 2,
+                        Desc = "상큼한 레몬 파르페. 두 마리를 동시에 녹여버려요." };
+                    break;
+                default: // RainbowPartySet: 레인보우 케이크 + 명품 딸기
+                    b = new MenuStats { Name = n, Color = MenuInfo.Argb(0xFFF07AFF), Damage = 2600f, Range = 6f, Cooldown = 0.65f,
+                        ChainCount = 8, ChainRange = 3.2f, ChainPct = 0.88f, PoisonDps = 1100f, PoisonDur = 4f, AirMult = 2.5f,
+                        Desc = "무지개 크림이 8번 튕기며 모두를 물들여요." };
                     break;
             }
             if (level <= 0) return b;
