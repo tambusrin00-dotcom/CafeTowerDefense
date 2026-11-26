@@ -150,6 +150,20 @@ $icon1024 = Join-Path $iconDir "AppIcon.png"
 $bmp.Save($icon1024, [System.Drawing.Imaging.ImageFormat]::Png)
 $g.Dispose()
 
+
+# ---- Android 적응형 아이콘 레이어 1024 ----
+# 기기마다 원·둥근 사각형 등으로 잘리므로 그림 전체를 가운데 안전 영역(지름 61%) 안에 넣음
+$adBg, $gb = New-Canvas 1024 1024
+Draw-Background $gb 1024 1024 512 470
+$adBg.Save((Join-Path $iconDir "AppIconBackground.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+$gb.Dispose(); $adBg.Dispose()
+
+$adFg, $gf = New-Canvas 1024 1024
+$gf.Clear([System.Drawing.Color]::Transparent)
+$gf.TranslateTransform(512, 512); $gf.ScaleTransform(0.64, 0.64); $gf.TranslateTransform(-420, -490)
+Draw-Art $gf $false
+$adFg.Save((Join-Path $iconDir "AppIconForeground.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+$gf.Dispose(); $adFg.Dispose()
 # ---- 스토어 아이콘 512 ----
 $storeDir = Join-Path $ProjectRoot "StoreAssets"
 New-Item -ItemType Directory -Force $storeDir | Out-Null

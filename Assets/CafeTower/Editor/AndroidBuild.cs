@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using UnityEditor;
+using UnityEditor.Android;
 using UnityEditor.Build;
 using UnityEditor.Build.Reporting;
 using UnityEngine;
@@ -22,24 +23,57 @@ namespace CafeTowerDefense.EditorTools
         const string ProductName = "카페 타워 디펜스";
         const string CompanyName = "tambusrin";
         /// <summary>스토어에 올릴 때마다 Version 과 VersionCode 를 올려야 함 (VersionCode는 정수, 항상 증가)</summary>
-        const string Version = "1.0.3";
-        const int VersionCode = 4;
+        const string Version = "1.0.8";
+        const int VersionCode = 8;
 
         const string IconPath = "Assets/CafeTower/Icons/AppIcon.png";
+        const string IconBackgroundPath = "Assets/CafeTower/Icons/AppIconBackground.png";
+        const string IconForegroundPath = "Assets/CafeTower/Icons/AppIconForeground.png";
 
         /// <summary>메뉴에서 아이콘만 바로 적용 (빌드 없이 Player Settings에서 확인용)</summary>
         [MenuItem("Cafe/앱 아이콘 적용")]
         public static void ApplyIcon()
         {
-            var icon = AssetDatabase.LoadAssetAtPath<Texture2D>(IconPath);
-            if (icon == null)
+            try
             {
-                EditorUtility.DisplayDialog("앱 아이콘", $"아이콘 파일이 없어요: {IconPath}", "확인");
-                return;
+                SetLauncherIcons();
+                AssetDatabase.SaveAssets();
+                Debug.Log("[AndroidBuild] 앱 아이콘 적용: 기본 + Android 적응형");
             }
+            catch (Exception e)
+            {
+                EditorUtility.DisplayDialog("앱 아이콘", e.Message, "확인");
+            }
+        }
+
+        /// <summary>
+        /// 기본 아이콘과 Android 적응형 아이콘을 지정.
+        /// 적응형을 비워 두면 Android 8 이상 기기의 홈 화면에 Unity 로고가 나옴.
+        /// </summary>
+        static void SetLauncherIcons()
+        {
+            var icon = LoadIcon(IconPath);
+            var background = LoadIcon(IconBackgroundPath);
+            var foreground = LoadIcon(IconForegroundPath);
             PlayerSettings.SetIcons(NamedBuildTarget.Unknown, new[] { icon }, IconKind.Any);
-            AssetDatabase.SaveAssets();
-            Debug.Log("[AndroidBuild] 앱 아이콘 적용: " + IconPath);
+
+            var android = NamedBuildTarget.Android;
+            var adaptive = PlayerSettings.GetPlatformIcons(android, AndroidPlatformIconKind.Adaptive);
+            foreach (var slot in adaptive) slot.SetTextures(background, foreground);
+            PlayerSettings.SetPlatformIcons(android, AndroidPlatformIconKind.Adaptive, adaptive);
+        }
+
+        static Texture2D LoadIcon(string path)
+        {
+            AssetDatabase.ImportAsset(path);
+            if (AssetImporter.GetAtPath(path) is TextureImporter importer && !importer.alphaIsTransparency)
+            {
+                importer.alphaIsTransparency = true; // 투명한 전경 가장자리에 색이 번지지 않게
+                importer.SaveAndReimport();
+            }
+            var tex = AssetDatabase.LoadAssetAtPath<Texture2D>(path);
+            if (tex == null) throw new Exception($"앱 아이콘이 없어요: {path}");
+            return tex;
         }
 
         static string PropsPath => Path.Combine(
@@ -118,10 +152,7 @@ namespace CafeTowerDefense.EditorTools
             PlayerSettings.bundleVersion = Version;
             PlayerSettings.Android.bundleVersionCode = VersionCode;
 
-            // 앱 아이콘: 기본 아이콘으로 지정하면 Android의 모든 해상도 아이콘이 여기서 만들어짐
-            var icon = AssetDatabase.LoadAssetAtPath<Texture2D>(IconPath);
-            if (icon == null) throw new Exception($"앱 아이콘이 없어요: {IconPath}");
-            PlayerSettings.SetIcons(NamedBuildTarget.Unknown, new[] { icon }, IconKind.Any);
+            SetLauncherIcons();
 
             // Google Play 요구사항: 64비트(ARM64) 포함 → IL2CPP 필수
             PlayerSettings.SetScriptingBackend(android, ScriptingImplementation.IL2CPP);
@@ -180,9 +211,29 @@ namespace CafeTowerDefense.EditorTools
             if (code != VersionCode.ToString()) problems.Add($"버전 코드 {code} (기대값 {VersionCode})");
             if (name != Version) problems.Add($"버전 이름 {name} (기대값 {Version})");
             if (!minify) problems.Add("R8(minify)이 꺼져 있음");
+            var res = Path.Combine(Path.GetDirectoryName(gradle), "src", "main", "res", "mipmap-xxxhdpi");
+            if (!IconLayerOk(Path.Combine(res, "ic_launcher_background.png"), true) ||
+                !IconLayerOk(Path.Combine(res, "ic_launcher_foreground.png"), false))
+                problems.Add("Android 적응형 아이콘이 카페 아이콘으로 들어가지 않음");
             if (problems.Count > 0)
                 throw new Exception("빌드는 끝났지만 설정이 반영되지 않았어요. 이 AAB는 올리지 마세요.\n- " + string.Join("\n- ", problems));
-            Debug.Log($"[AndroidBuild] 확인 완료: 버전 {name} · 코드 {code} · R8 켜짐");
+            Debug.Log($"[AndroidBuild] 확인 완료: 버전 {name} · 코드 {code} · R8 켜짐 · 적응형 아이콘");
+        }
+
+        /// <summary>레이어 파일이 있고, 배경은 모서리가 불투명·전경은 투명한지 (Unity 기본 아이콘은 xxxhdpi가 없음)</summary>
+        static bool IconLayerOk(string path, bool opaqueCorner)
+        {
+            if (!File.Exists(path)) return false;
+            var tex = new Texture2D(2, 2);
+            try
+            {
+                if (!tex.LoadImage(File.ReadAllBytes(path))) return false;
+                return tex.GetPixel(0, 0).a > 0.5f == opaqueCorner;
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(tex);
+            }
         }
 
         /// <summary>

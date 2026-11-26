@@ -1,0 +1,16 @@
+<ko-KR>
+• 명예의 전당: 최고 기록 TOP 10을 저장하고 첫 화면에서 볼 수 있어요
+• 1등 기록을 다운로드 링크와 함께 친구에게 공유해 보세요
+• 200웨이브를 넘기면 최종 보스가 나타나요
+• 5웨이브마다 난이도가 크게 올라요
+• 아주 희귀한 전설 메뉴 '인스타 감성 티' 추가
+• 첫 화면과 앱 아이콘을 새롭게 꾸몄어요
+</ko-KR>
+<en-US>
+• Hall of Fame: your top 10 records are saved and shown on the start screen
+• Share your best record with friends, with a download link
+• A final boss appears after wave 200
+• Difficulty rises sharply every 5 waves
+• New ultra-rare legendary menu: Insta Mood Tea
+• Refreshed start screen and app icon
+</en-US>

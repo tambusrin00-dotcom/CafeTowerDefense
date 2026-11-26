@@ -44,8 +44,8 @@ namespace CafeTowerDefense
         static readonly Color[] GradeColors = { C(0xFFC9B8A6), C(0xFF9ED68F), C(0xFF7FC4F0), C(0xFFE3A3F0), C(0xFFFFC163) };
         public static Color GradeColor(Grade q) => GradeColors[(int)q];
 
-        // 기본 · 스페셜 · 마스터 · 세트
-        static readonly Color[] TierColors = { C(0xFF7FC4F0), C(0xFFE3A3F0), C(0xFFFFC163), C(0xFFFF9A85) };
+        // 기본 · 스페셜 · 마스터 · 세트 · 전설 · 코스
+        static readonly Color[] TierColors = { C(0xFF7FC4F0), C(0xFFE3A3F0), C(0xFFFFC163), C(0xFFFF9A85), C(0xFFFF6FB5), C(0xFF6FE0C0) };
         public static Color Tier(int tier) => TierColors[Mathf.Clamp(tier, 0, TierColors.Length - 1)];
 
         public static Color Shade(Color c, float f) => new Color(c.r * f, c.g * f, c.b * f, c.a);

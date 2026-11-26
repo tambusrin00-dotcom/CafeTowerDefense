@@ -8,7 +8,7 @@ namespace CafeTowerDefense
     /// 게임 상태를 3D 오브젝트로 그림. 로직(Cafe)은 건드리지 않고 매 프레임 읽기만 함.
     /// 게임 칸 (x, y) → 월드 (x, 높이, H-1-y). 화면 위쪽(y=0)이 월드 +Z(먼 쪽).
     /// </summary>
-    public class CafeView
+    public partial class CafeView
     {
         static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
         static readonly int ColorId = Shader.PropertyToID("_Color");
@@ -130,6 +130,8 @@ namespace CafeTowerDefense
             public readonly List<Transform> Legs = new List<Transform>();
             public Color BaseColor;
             public float Radius, HpWidth, ModelY;
+            /// <summary>벌레 모델 크기 배율</summary>
+            public float Scale = 1f;
             public float Flash;
             public Vector3 LastPos;
             public bool HasLast;
@@ -145,6 +147,7 @@ namespace CafeTowerDefense
             CreateMaterials();
             BuildBoard();
             BuildOverlays();
+            InitDamageText();
 
             game.Hurt += e =>
             {
@@ -432,6 +435,7 @@ namespace CafeTowerDefense
             SyncSelection(flashCell, flashTime);
             SyncHover(hover);
             UpdateEffects(dt);
+            SyncDamageText(cam, dt);
         }
 
         // ------------------------------------------------------------------ 마우스 올림 미리보기
@@ -738,6 +742,8 @@ namespace CafeTowerDefense
                     straw.transform.localRotation = Quaternion.Euler(0f, 0f, -12f);
                 }
 
+                FlavorGarnish(cup, t.Flavor, s, hasLid, dome);
+
                 if (t.Grade >= Grade.Premium)
                 {
                     // 휘핑크림: 아래가 넓고 위로 갈수록 좁아지는 소용돌이
@@ -767,24 +773,25 @@ namespace CafeTowerDefense
                 cake.SetParent(tr, false);
                 cake.localPosition = new Vector3(0f, 0.11f, 0f);
                 tv.Item = cake;
-                var light = Color.Lerp(col, Color.white, 0.35f);
-                Prim(PrimitiveType.Cylinder, cake, new Vector3(0f, 0.12f, 0f), new Vector3(0.58f, 0.12f, 0.58f), glossMat, col, 0.25f);
-                Prim(PrimitiveType.Cylinder, cake, new Vector3(0f, 0.25f, 0f), new Vector3(0.61f, 0.02f, 0.61f), lit, Cream);
-                Prim(PrimitiveType.Cylinder, cake, new Vector3(0f, 0.35f, 0f), new Vector3(0.42f, 0.09f, 0.42f), glossMat, light, 0.2f);
-                Prim(PrimitiveType.Cylinder, cake, new Vector3(0f, 0.445f, 0f), new Vector3(0.44f, 0.015f, 0.44f), lit, Cream);
-                Prim(PrimitiveType.Sphere, cake, new Vector3(0f, 0.53f, 0f), Vector3.one * 0.14f, glossMat, MenuInfo.Argb(0xFFE0283C), 0.4f);
+                // 세트 메뉴는 바탕이 된 시그니처 디저트의 모양을 그대로 씀
+                var shape = MenuDB.IsSet(t.Signature.Value) ? MenuDB.SetFor(t.Signature.Value).Dessert : t.Signature.Value;
+                BuildSignature(cake, shape, col);
 
                 tv.Orbit = new Transform[3];
                 for (int i = 0; i < 3; i++)
                     tv.Orbit[i] = Prim(PrimitiveType.Sphere, tr, Vector3.zero, Vector3.one * 0.1f, glossMat, Sprinkles[i], 1f, false).transform;
 
-                for (int i = 0; i < t.SignatureLevel; i++)
-                {
-                    float a = i / (float)MenuDB.MaxSignatureLevel * Mathf.PI * 2f + 0.6f;
-                    var p = new Vector3(Mathf.Cos(a) * 0.15f, 0f, Mathf.Sin(a) * 0.15f);
-                    Prim(PrimitiveType.Cylinder, cake, p + new Vector3(0f, 0.5f, 0f), new Vector3(0.035f, 0.05f, 0.035f), lit, MenuInfo.Argb(0xFFFFB3CF), 0f, false);
-                    Prim(PrimitiveType.Sphere, cake, p + new Vector3(0f, 0.58f, 0f), new Vector3(0.04f, 0.06f, 0.04f), glossMat, MenuInfo.Argb(0xFFFFC850), 2f, false);
-                }
+                // 강화 단계: 메뉴 앞쪽의 꽃. 강화할 때마다 꽃잎이 하나씩 채워짐 (인스타 감성 티는 강화 불가라 없음)
+                if (MenuDB.CanUpgrade(t.Signature.Value))
+                    UpgradeFlower(tr, t.SignatureLevel, MenuDB.MaxSignatureLevel);
+
+                // 전설 메뉴: 접시에 빛나는 분홍 테두리
+                if (t.Signature == SignatureMenu.InstaTea)
+                    Prim(PrimitiveType.Cylinder, tr, new Vector3(0f, 0.095f, 0f), new Vector3(0.92f, 0.014f, 0.92f), glossMat, Theme.Tier(MenuDB.LegendTier), 1.6f, false);
+
+                // 코스 메뉴: 접시에 빛나는 민트 테두리
+                if (MenuDB.IsCourse(t.Signature.Value))
+                    Prim(PrimitiveType.Cylinder, tr, new Vector3(0f, 0.095f, 0f), new Vector3(0.9f, 0.012f, 0.9f), glossMat, Theme.Tier(MenuDB.CourseTier), 0.9f, false);
 
                 // 세트 메뉴: 케이크를 왼쪽으로 옮기고 오른쪽 앞에 음료 컵을 곁들임 + 접시에 빛나는 코랄 테두리
                 if (MenuDB.IsSet(t.Signature.Value))
@@ -805,6 +812,7 @@ namespace CafeTowerDefense
                     Prim(PrimitiveType.Sphere, cup, new Vector3(0f, 0.525f * s, 0f), new Vector3(0.4f * s, 0.12f * s, 0.4f * s), glossMat, drink, 0.35f);
                     var straw = Prim(PrimitiveType.Cylinder, cup, new Vector3(0.05f * s, 0.68f * s, 0f), new Vector3(0.04f, 0.16f * s, 0.04f), glossMat, Theme.Shade(drink, 0.8f), 0.25f);
                     straw.transform.localRotation = Quaternion.Euler(0f, 0f, -12f);
+                    FlavorGarnish(cup, set.Drink.Flavor, s, true, true);
                 }
             }
             AddPop(tr);
@@ -890,7 +898,7 @@ namespace CafeTowerDefense
                     ? Mathf.Sin(time * 8f + e.Progress) * 0.06f
                     : (moving ? Mathf.Abs(Mathf.Sin(time * 18f + e.Progress * 3f)) * (ev.Kind == Bug.Mouse ? 0.04f : 0.015f) : 0f);
                 ev.Model.localPosition = new Vector3(0f, ev.ModelY + bob, 0f);
-                ev.Model.localScale = Vector3.one * (1f + ev.Flash * 0.12f);
+                ev.Model.localScale = Vector3.one * (ev.Scale * (1f + ev.Flash * 0.12f));
 
                 for (int i = 0; i < ev.Legs.Count; i++)
                     ev.Legs[i].localRotation = Quaternion.Euler(0f, moving ? Mathf.Sin(time * 24f + i * 2.1f) * 18f : 0f, 0f);
@@ -905,7 +913,7 @@ namespace CafeTowerDefense
                 if (ev.Stun.gameObject.activeSelf != e.Stunned) ev.Stun.gameObject.SetActive(e.Stunned);
 
                 ev.HpRoot.rotation = camRot;
-                float f = Mathf.Clamp01(e.Hp / e.MaxHp);
+                float f = Mathf.Clamp01((float)(e.Hp / e.MaxHp));
                 float w = ev.HpWidth;
                 ev.HpFill.localScale = new Vector3(Mathf.Max(0.001f, w * f), 0.09f, 1f);
                 ev.HpFill.localPosition = new Vector3(-w / 2f + w * f / 2f, 0f, -0.01f);
@@ -922,11 +930,15 @@ namespace CafeTowerDefense
             }
         }
 
+        /// <summary>벌레 크기 배율 (일반 벌레 · 생쥐 대장)</summary>
+        const float PestScale = 1.3f, PestBossScale = 1.15f;
+
         PestVis CreatePest(Pest e)
         {
             var kind = e.Boss ? Bug.Mouse : e.Flying ? Bug.Fly : e.Speed > 2f ? Bug.Roach : Bug.Ant;
-            float r = e.Boss ? 0.42f : 0.25f;
-            var ev = new PestVis { Kind = kind, Radius = r, HpWidth = r * 2.4f };
+            float scale = e.Boss ? PestBossScale : PestScale;
+            float r = (e.Boss ? 0.42f : 0.25f) * scale;
+            var ev = new PestVis { Kind = kind, Radius = r, HpWidth = r * 2.4f, Scale = scale };
             var go = new GameObject(kind.ToString());
             go.transform.SetParent(root, false);
             ev.Root = go;
@@ -1012,6 +1024,7 @@ namespace CafeTowerDefense
                     top = 0.68f;
                     break;
             }
+            top = AddArmor(model, kind, ArmorTier(game.Wave, e.Boss && game.Wave >= Cafe.MaxWave), top);
             foreach (var rend in ev.Tinted) Paint(rend, ev.BaseColor);
 
             // 기절: 바닥에 빛나는 고리
@@ -1023,13 +1036,167 @@ namespace CafeTowerDefense
             // 체력바 (항상 카메라를 향함)
             var hp = new GameObject("Hp").transform;
             hp.SetParent(tr, false);
-            hp.localPosition = new Vector3(0f, ev.ModelY + top + 0.22f, 0f);
+            hp.localPosition = new Vector3(0f, ev.ModelY + top * scale + 0.22f, 0f);
             ev.HpRoot = hp;
             Prim(PrimitiveType.Quad, hp, Vector3.zero, new Vector3(ev.HpWidth + 0.05f, 0.13f, 1f), unlit, MenuInfo.Argb(0xFF20140E), 0f, false);
             var fill = Prim(PrimitiveType.Quad, hp, new Vector3(0f, 0f, -0.01f), new Vector3(ev.HpWidth, 0.09f, 1f), unlit, Color.green, 0f, false);
             ev.HpFill = fill.transform;
             ev.HpFillR = fill.GetComponent<Renderer>();
             return ev;
+        }
+
+        // ------------------------------------------------------------------ 벌레 방어구 (외형만, 능력치에 영향 없음)
+
+        /// <summary>방어구가 한 단계 좋아지는 웨이브: 가죽 · 강철 · 기사 · 황금 · 수정. 최종 보스는 왕실 방어구.</summary>
+        static readonly int[] ArmorWaves = { 10, 30, 60, 100, 150 };
+
+        readonly struct ArmorStyle
+        {
+            public readonly Color Main, Trim, Accent;
+            public readonly float Glow;
+
+            public ArmorStyle(uint main, uint trim, uint accent, float glow)
+            {
+                Main = MenuInfo.Argb(main);
+                Trim = MenuInfo.Argb(trim);
+                Accent = MenuInfo.Argb(accent);
+                Glow = glow;
+            }
+        }
+
+        static readonly ArmorStyle[] ArmorStyles =
+        {
+            new ArmorStyle(0xFF8A5A33, 0xFFC79A63, 0xFFE8D3A8, 0f),    // 가죽
+            new ArmorStyle(0xFF8C98A6, 0xFF56616E, 0xFFD8E0E8, 0f),    // 강철
+            new ArmorStyle(0xFFDCE6F2, 0xFF3F6FD8, 0xFFFF4D6D, 0.05f), // 기사
+            new ArmorStyle(0xFFFFC83D, 0xFFB8741A, 0xFFFF3355, 0.25f), // 황금
+            new ArmorStyle(0xFF6FE8FF, 0xFFE070FF, 0xFFFFFFFF, 0.7f),  // 수정
+            new ArmorStyle(0xFFFFD95A, 0xFF7A1FD1, 0xFFFF2D6F, 0.9f),  // 왕실
+        };
+
+        static int ArmorTier(int wave, bool finalBoss)
+        {
+            if (finalBoss) return ArmorStyles.Length;
+            int tier = 0;
+            foreach (var w in ArmorWaves)
+                if (wave >= w) tier++;
+            return tier;
+        }
+
+        /// <summary>단계에 맞는 방어구를 입히고, 체력바 위치 계산에 쓸 모델 꼭대기 높이를 돌려줌</summary>
+        float AddArmor(Transform model, Bug kind, int tier, float top)
+        {
+            if (tier <= 0) return top;
+
+            Vector3 hc, hs, bc, bs; // 머리·몸통의 중심과 크기
+            switch (kind)
+            {
+                case Bug.Ant:
+                    hc = new Vector3(0f, 0.16f, 0.16f); hs = new Vector3(0.16f, 0.15f, 0.15f);
+                    bc = new Vector3(0f, 0.15f, -0.16f); bs = new Vector3(0.24f, 0.2f, 0.3f);
+                    break;
+                case Bug.Roach:
+                    hc = new Vector3(0f, 0.08f, 0.24f); hs = new Vector3(0.14f, 0.1f, 0.1f);
+                    bc = new Vector3(0f, 0.09f, -0.02f); bs = new Vector3(0.3f, 0.12f, 0.48f);
+                    break;
+                case Bug.Fly:
+                    hc = new Vector3(0f, 0.02f, 0.15f); hs = new Vector3(0.17f, 0.16f, 0.14f);
+                    bc = new Vector3(0f, 0f, -0.03f); bs = new Vector3(0.22f, 0.2f, 0.3f);
+                    break;
+                default:
+                    hc = new Vector3(0f, 0.36f, 0.42f); hs = new Vector3(0.42f, 0.4f, 0.46f);
+                    bc = new Vector3(0f, 0.3f, -0.05f); bs = new Vector3(0.66f, 0.55f, 0.9f);
+                    break;
+            }
+
+            var st = ArmorStyles[tier - 1];
+            var mat = tier >= 2 ? glossMat : lit; // 가죽만 무광
+            bool royal = tier >= ArmorStyles.Length;
+
+            // 그림자는 몸통이 드리우므로 장식은 끔 (벌레 수가 많아도 가볍게)
+            void Piece(PrimitiveType type, Vector3 pos, Vector3 scale, Color c, float em = 0f, Vector3 euler = default)
+            {
+                var p = Prim(type, model, pos, scale, mat, c, em, false);
+                p.transform.localRotation = Quaternion.Euler(euler);
+            }
+
+            // 1단계~: 투구 + 테두리 (눈을 가리지 않도록 살짝 위·뒤로)
+            Piece(PrimitiveType.Sphere, hc + new Vector3(0f, 0.28f * hs.y, -0.1f * hs.z),
+                new Vector3(1.12f * hs.x, 0.85f * hs.y, 0.95f * hs.z), st.Main, st.Glow * 0.5f);
+            Piece(PrimitiveType.Cylinder, hc + new Vector3(0f, 0.14f * hs.y, -0.1f * hs.z),
+                new Vector3(1.2f * hs.x, 0.04f * hs.y, 0.9f * hs.z), st.Trim, st.Glow * 0.5f);
+            float armorTop = hc.y + 0.705f * hs.y;
+
+            // 2단계~: 등판 + 가운데 줄무늬
+            if (tier >= 2)
+            {
+                var plate = bc + new Vector3(0f, 0.2f * bs.y, 0f);
+                Piece(PrimitiveType.Sphere, plate, new Vector3(1.08f * bs.x, 0.72f * bs.y, 1.04f * bs.z), st.Main, st.Glow * 0.35f);
+                Piece(PrimitiveType.Sphere, plate, new Vector3(0.14f * bs.x, 0.76f * bs.y, 1.08f * bs.z), st.Trim, st.Glow * 0.5f);
+            }
+
+            // 3단계~: 어깨 보호대 + 투구 깃털 (왕실은 왕관을 쓰므로 깃털 없음)
+            if (tier >= 3)
+            {
+                foreach (var side in new[] { -1f, 1f })
+                    Piece(PrimitiveType.Sphere, bc + new Vector3(side * 0.46f * bs.x, 0.2f * bs.y, 0.26f * bs.z),
+                        new Vector3(0.38f * bs.x, 0.38f * bs.y, 0.3f * bs.z), st.Trim, st.Glow * 0.5f);
+                if (!royal)
+                {
+                    Piece(PrimitiveType.Sphere, new Vector3(hc.x, armorTop + 0.14f * hs.y, hc.z - 0.14f * hs.z),
+                        new Vector3(0.16f * hs.x, 0.55f * hs.y, 0.9f * hs.z), st.Accent, st.Glow);
+                    armorTop += 0.4f * hs.y;
+                }
+            }
+
+            // 4단계~: 등 가시 + 투구 뿔 + 이마 보석
+            if (tier >= 4)
+            {
+                float spike = Mathf.Min(bs.x, bs.z) * 0.2f;
+                foreach (var f in new[] { -0.3f, 0f, 0.3f })
+                {
+                    float rise = 0.36f * bs.y * Mathf.Sqrt(Mathf.Max(0f, 1f - f * f / 0.27f));
+                    Piece(PrimitiveType.Cube, bc + new Vector3(0f, 0.2f * bs.y + rise + spike * 0.2f, f * bs.z),
+                        Vector3.one * spike, st.Accent, st.Glow, new Vector3(45f, 0f, 45f));
+                }
+                foreach (var side in new[] { -1f, 1f })
+                    Piece(PrimitiveType.Cylinder, hc + new Vector3(side * 0.56f * hs.x, 0.62f * hs.y, -0.08f * hs.z),
+                        new Vector3(0.08f * hs.x, 0.26f * hs.y, 0.08f * hs.x), st.Trim, st.Glow, new Vector3(0f, 0f, -side * 32f));
+                Piece(PrimitiveType.Sphere, hc + new Vector3(0f, 0.56f * hs.y, 0.3f * hs.z), Vector3.one * 0.18f * hs.x, st.Accent, 1f + st.Glow);
+            }
+
+            // 5단계: 머리 위에 떠 있는 빛의 보석 고리
+            if (tier == 5)
+            {
+                float ringY = armorTop + 0.2f * hs.y;
+                for (int i = 0; i < 6; i++)
+                {
+                    float a = i * Mathf.PI / 3f;
+                    Piece(PrimitiveType.Sphere, new Vector3(hc.x + Mathf.Cos(a) * 0.58f * hs.x, ringY, hc.z + Mathf.Sin(a) * 0.58f * hs.z),
+                        Vector3.one * 0.14f * hs.x, st.Accent, 1.6f);
+                }
+                armorTop = ringY + 0.1f * hs.y;
+            }
+
+            // 최종 보스: 왕관 + 망토
+            if (royal)
+            {
+                float crownY = armorTop + 0.06f * hs.y;
+                Piece(PrimitiveType.Cylinder, new Vector3(hc.x, crownY, hc.z - 0.1f * hs.z),
+                    new Vector3(0.7f * hs.x, 0.1f * hs.y, 0.7f * hs.z), st.Main, 1f);
+                for (int i = 0; i < 5; i++)
+                {
+                    float a = i * Mathf.PI * 2f / 5f + Mathf.PI / 2f;
+                    var tip = new Vector3(hc.x + Mathf.Cos(a) * 0.32f * hs.x, crownY + 0.2f * hs.y, hc.z - 0.1f * hs.z + Mathf.Sin(a) * 0.32f * hs.z);
+                    Piece(PrimitiveType.Cube, tip, Vector3.one * 0.11f * hs.x, st.Main, 1f, new Vector3(45f, 0f, 45f));
+                    Piece(PrimitiveType.Sphere, tip + new Vector3(0f, 0.1f * hs.y, 0f), Vector3.one * 0.09f * hs.x, st.Accent, 2f);
+                }
+                Piece(PrimitiveType.Cube, bc + new Vector3(0f, 0.08f * bs.y, -0.56f * bs.z),
+                    new Vector3(0.95f * bs.x, 0.8f * bs.y, 0.04f * bs.z), st.Trim, 0.25f, new Vector3(-12f, 0f, 0f));
+                armorTop = crownY + 0.38f * hs.y;
+            }
+
+            return Mathf.Max(top, armorTop);
         }
 
         // ------------------------------------------------------------------ 투사체 / 번개

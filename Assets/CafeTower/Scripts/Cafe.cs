@@ -31,7 +31,7 @@ namespace CafeTowerDefense
     public class WaveInfo
     {
         public int Count;
-        public float Hp;
+        public double Hp;
         public float Speed;
         public float Interval;
         public int Bounty;
@@ -57,6 +57,12 @@ namespace CafeTowerDefense
         /// <summary>위치 바꾸기를 이미 썼는지 (시그니처 메뉴당 1번)</summary>
         public bool Moved { get; internal set; }
         internal float Cooldown;
+        /// <summary>인스타 감성 티의 공격력 (매장의 다른 메뉴 공격력 합계)</summary>
+        internal float InstaDamage;
+        /// <summary>인스타 감성 티에 영구히 더해지는 공격력 (자기 음료 + 함께 나온 라운드 음료)</summary>
+        internal float InstaBonus;
+        /// <summary>배치 패스로 쌓인 공격력 배율</summary>
+        internal float DamageMult = 1f;
 
         public MenuTower(Cell cell, Flavor type, Grade quality)
         {
@@ -78,12 +84,15 @@ namespace CafeTowerDefense
         internal void Refresh()
         {
             Stats = Signature.HasValue ? MenuDB.SignatureStats(Signature.Value, SignatureLevel) : MenuDB.FlavorStats(Flavor, Grade);
+            if (Signature == SignatureMenu.InstaTea) { Stats.Damage = InstaDamage; return; }
+            Stats.Damage *= DamageMult;
+            Stats.PoisonDps *= DamageMult;
         }
     }
 
     public class Pest
     {
-        public readonly float MaxHp;
+        public readonly double MaxHp;
         public readonly float Speed;
         public readonly bool Flying;
         public readonly bool Boss;
@@ -94,7 +103,7 @@ namespace CafeTowerDefense
 
         public float X { get; private set; }
         public float Y { get; private set; }
-        public float Hp { get; internal set; }
+        public double Hp { get; internal set; }
         /// <summary>이동한 거리 (타워 타겟 우선순위)</summary>
         public float Progress { get; private set; }
         public bool Dead { get; internal set; }
@@ -111,7 +120,7 @@ namespace CafeTowerDefense
         public bool Poisoned => PoisonTimer > 0f;
         public bool Stunned => StunTimer > 0f;
 
-        public Pest(float maxHp, float speed, bool flying, bool boss, int bounty, int leakDamage, List<Vector2> path, Color32 color)
+        public Pest(double maxHp, float speed, bool flying, bool boss, int bounty, int leakDamage, List<Vector2> path, Color32 color)
         {
             MaxHp = maxHp;
             Speed = speed;
@@ -232,8 +241,8 @@ namespace CafeTowerDefense
         public const int W = 19;
         public const int H = 19;
         public const int DrinksPerRound = 5;
-        /// <summary>마지막 웨이브. 화면에는 표시하지 않음.</summary>
-        public const int MaxWave = 1000;
+        /// <summary>최종 보스가 나오는 마지막 웨이브. 화면에는 표시하지 않음.</summary>
+        public const int MaxWave = 201;
         public const int StartDesserts = 20;
         public const int CupClearCost = 10;
         public const int MoveCost = 15;
@@ -278,6 +287,18 @@ namespace CafeTowerDefense
         /// <summary>애니메이션용 누적 게임 시간</summary>
         public float Time { get; private set; }
 
+        // 기록용. 모두 게임 시간 기준이라 배속·일시정지의 영향을 받지 않음
+        public double BossDamage { get; private set; }
+        public float BossStageTime { get; private set; }
+        public float TotalTime { get; private set; }
+
+        /// <summary>이번 판에서 음료 배치를 패스한 횟수</summary>
+        public int PassCount { get; private set; }
+        /// <summary>패스 1회마다 모든 음료 공격력 +1% (합연산)</summary>
+        public const float PassDamageBonus = 0.01f;
+        public float DamageMult => 1f + PassDamageBonus * PassCount;
+        public float DamageBonusPercent => PassDamageBonus * PassCount * 100f;
+
         int toSpawn;
         float spawnTimer;
         readonly List<Pest> targetBuf = new List<Pest>();
@@ -292,6 +313,8 @@ namespace CafeTowerDefense
         public event Action<Pest> Hurt;
         /// <summary>투사체가 도착한 위치 (범위 피해 연출용)</summary>
         public event Action<MenuTower, float, float> Impact;
+        /// <summary>떠오르는 피해 숫자용: (맞은 벌레, 실제 피해, 치명타 여부). 직접 맞은 공격만 (범위·지속 피해 제외)</summary>
+        public event Action<Pest, float, bool> DamageShown;
 
         public int RemainingEnemies => Pests.Count + toSpawn;
         public bool IsBuildState => State == GameState.BuildPlace || State == GameState.BuildChoose;
@@ -309,7 +332,31 @@ namespace CafeTowerDefense
         public MenuTower TowerAt(Cell c) => towers[c.X, c.Y];
         public static bool InBounds(Cell c) => c.X >= 0 && c.X < W && c.Y >= 0 && c.Y < H;
 
-        void Touch() => Version++;
+        void Touch()
+        {
+            RefreshInstaTea();
+            Version++;
+        }
+
+        /// <summary>인스타 감성 티의 공격력을 현재 매장의 다른 메뉴 공격력 합계로 맞춤. 티끼리는 서로 더하지 않음.</summary>
+        void RefreshInstaTea()
+        {
+            float sum = 0f;
+            bool any = false;
+            foreach (var t in towers)
+            {
+                if (t == null) continue;
+                if (t.Signature == SignatureMenu.InstaTea) any = true;
+                else sum += t.Stats.Damage;
+            }
+            if (!any) return;
+            foreach (var t in towers)
+            {
+                if (t == null || t.Signature != SignatureMenu.InstaTea) continue;
+                t.InstaDamage = t.InstaBonus * DamageMult + sum;
+                t.Refresh();
+            }
+        }
 
         public void NewGame()
         {
@@ -328,12 +375,131 @@ namespace CafeTowerDefense
             Desserts = StartDesserts;
             Coins = 0;
             BaristaLevel = 0;
+            BossDamage = 0;
+            BossStageTime = 0f;
+            TotalTime = 0f;
+            PassCount = 0;
             toSpawn = 0;
             Selected = null;
             MovingFrom = null;
             State = GameState.BuildPlace;
             RecalcPath();
             ShowMessage("빈 칸을 눌러 음료 5잔을 놓으세요");
+        }
+
+        // ------------------------------------------------------------------ 이어하기 (저장 / 불러오기)
+
+        /// <summary>웨이브 시작 직전 상태 (웨이브 도중에는 이것을 저장)</summary>
+        CafeSaveData waveStartSave;
+
+        /// <summary>지금 저장할 상태. 영업이 끝났으면 null (저장 지움).</summary>
+        public CafeSaveData SaveData => IsOver ? null : State == GameState.Wave ? waveStartSave : Capture(State);
+
+        CafeSaveData Capture(GameState state)
+        {
+            var d = new CafeSaveData
+            {
+                State = state.ToString(),
+                Wave = Wave,
+                Desserts = Desserts,
+                Coins = Coins,
+                BaristaLevel = BaristaLevel,
+                PassCount = PassCount,
+                BossDamage = BossDamage,
+                BossStageTime = BossStageTime,
+                TotalTime = TotalTime,
+                Cells = new int[W * H],
+            };
+            for (int x = 0; x < W; x++)
+            for (int y = 0; y < H; y++)
+            {
+                d.Cells[x * H + y] = (int)cells[x, y];
+                var t = towers[x, y];
+                if (t == null) continue;
+                d.Towers.Add(new TowerSave
+                {
+                    X = x,
+                    Y = y,
+                    Flavor = t.Flavor.ToString(),
+                    Grade = t.Grade.ToString(),
+                    Signature = t.Signature.HasValue ? t.Signature.Value.ToString() : "",
+                    SignatureLevel = t.SignatureLevel,
+                    Kept = t.Kept,
+                    Kills = t.Kills,
+                    TotalDamage = t.TotalDamage,
+                    Moved = t.Moved,
+                    InstaBonus = t.InstaBonus,
+                    RoundIndex = RoundDrinks.IndexOf(t),
+                });
+            }
+            return d;
+        }
+
+        /// <summary>저장된 상태로 되돌림. 웨이브 도중에 저장된 판은 그 웨이브를 처음부터 다시 시작.</summary>
+        public bool Restore(CafeSaveData d)
+        {
+            if (d == null || d.Cells == null || d.Cells.Length != W * H || d.Wave < 1) return false;
+            if (!Enum.TryParse(d.State, out GameState st) || st == GameState.GameOver || st == GameState.Victory) return false;
+            NewGame();
+            for (int x = 0; x < W; x++)
+            for (int y = 0; y < H; y++)
+            {
+                int v = d.Cells[x * H + y];
+                cells[x, y] = v == (int)CellType.EmptyCup || v == (int)CellType.Menu ? (CellType)v : CellType.Empty;
+            }
+            foreach (var wp in Waypoints) cells[wp.X, wp.Y] = CellType.Waypoint;
+
+            Wave = Mathf.Clamp(d.Wave, 1, MaxWave);
+            Desserts = Mathf.Max(1, d.Desserts);
+            Coins = Mathf.Max(0, d.Coins);
+            BaristaLevel = Mathf.Clamp(d.BaristaLevel, 0, MenuDB.MaxBaristaLevel);
+            PassCount = Mathf.Max(0, d.PassCount);
+            BossDamage = d.BossDamage;
+            BossStageTime = d.BossStageTime;
+            TotalTime = d.TotalTime;
+
+            var round = new SortedList<int, MenuTower>();
+            if (d.Towers != null)
+                foreach (var s in d.Towers)
+                {
+                    var c = new Cell(s.X, s.Y);
+                    if (!InBounds(c) || cells[c.X, c.Y] != CellType.Menu) continue;
+                    if (!Enum.TryParse(s.Flavor, out Flavor f) || !Enum.TryParse(s.Grade, out Grade g)) continue;
+                    var t = new MenuTower(c, f, g) { DamageMult = DamageMult };
+                    if (!string.IsNullOrEmpty(s.Signature) && Enum.TryParse(s.Signature, out SignatureMenu sig))
+                    {
+                        t.SetMenu(f, g, sig);
+                        t.SignatureLevel = Mathf.Clamp(s.SignatureLevel, 0, MenuDB.MaxSignatureLevel);
+                        t.InstaBonus = s.InstaBonus;
+                    }
+                    t.Kept = s.Kept;
+                    t.Kills = s.Kills;
+                    t.TotalDamage = s.TotalDamage;
+                    t.Moved = s.Moved;
+                    t.Refresh();
+                    towers[c.X, c.Y] = t;
+                    if (s.RoundIndex >= 0 && !s.Kept && !round.ContainsKey(s.RoundIndex)) round.Add(s.RoundIndex, t);
+                }
+            // 메뉴 정보를 읽지 못한 칸은 빈 컵으로
+            for (int x = 0; x < W; x++)
+            for (int y = 0; y < H; y++)
+                if (cells[x, y] == CellType.Menu && towers[x, y] == null) cells[x, y] = CellType.EmptyCup;
+            RoundDrinks.AddRange(round.Values);
+
+            CurrentWave = WaveInfoFor(Wave);
+            RecalcPath();
+            if (st == GameState.Wave)
+            {
+                StartWave();
+                ShowMessage($"이어서 영업해요 · 웨이브 {Wave}를 처음부터 다시 막아요");
+            }
+            else
+            {
+                State = st == GameState.BuildChoose && RoundDrinks.Count >= DrinksPerRound ? GameState.BuildChoose : GameState.BuildPlace;
+                ShowMessage(State == GameState.BuildChoose ? "이어서 영업해요 · 남길 음료 한 잔을 골라주세요" : "이어서 영업해요 · 음료를 놓으세요");
+                Touch();
+            }
+            return true;
         }
 
         // ------------------------------------------------------------------ 길찾기
@@ -554,7 +720,14 @@ namespace CafeTowerDefense
         {
             var type = (Flavor)rng.Next(Enum.GetValues(typeof(Flavor)).Length);
             var quality = MenuDB.RollQuality(BaristaLevel, rng);
-            var t = new MenuTower(c, type, quality);
+            var t = new MenuTower(c, type, quality) { DamageMult = DamageMult };
+            t.Refresh();
+            bool insta = rng.NextDouble() < MenuDB.InstaTeaChance;
+            if (insta)
+            {
+                t.InstaBonus = MenuDB.FlavorStats(type, quality).Damage; // 패스 배율은 RefreshInstaTea에서 적용. 티가 된 음료 자신의 공격력도 5잔 합계에 포함
+                t.SetMenu(type, quality, SignatureMenu.InstaTea);
+            }
             cells[c.X, c.Y] = CellType.Menu;
             towers[c.X, c.Y] = t;
             RoundDrinks.Add(t);
@@ -564,8 +737,27 @@ namespace CafeTowerDefense
                 Selected = null;
                 ShowMessage("남길 음료 한 잔을 골라주세요");
             }
+            if (insta) ShowMessage("전설 메뉴 등장! 인스타 감성 티를 꼭 남기세요");
             RecalcPath();
             return t;
+        }
+
+        /// <summary>남겨 둔 음료는 준비·선택 단계에 무료로 버릴 수 있음</summary>
+        public bool CanDemolish(MenuTower t) =>
+            t != null && t.Kept && IsBuildState && InBounds(t.Cell) && towers[t.Cell.X, t.Cell.Y] == t;
+
+        /// <summary>남겨 둔 음료를 버림. 자리는 빈 칸이 됨 (코인 없음).</summary>
+        public void Demolish(Cell c)
+        {
+            if (!InBounds(c)) return;
+            var t = towers[c.X, c.Y];
+            if (!CanDemolish(t)) return;
+            towers[c.X, c.Y] = null;
+            cells[c.X, c.Y] = CellType.Empty;
+            if (Selected == c) Selected = null;
+            if (MovingFrom == c) MovingFrom = null;
+            ShowMessage($"{t.Stats.Name}을(를) 버렸어요");
+            RecalcPath();
         }
 
         public void ClearCup(Cell c)
@@ -704,10 +896,68 @@ namespace CafeTowerDefense
             StartWave();
         }
 
+        // ------------------------------------------------------------------ 코스 메뉴
+
+        /// <summary>
+        /// 코스 메뉴 재료를 찾음. t는 매장에 남긴 재료 시그니처 중 하나여야 하고,
+        /// 나머지는 매장에 남긴 다른 시그니처에서 찾음. 없으면 null. (준비·선택 단계에서만)
+        /// </summary>
+        public List<MenuTower> FindCourseParts(MenuTower t, CourseRecipe r)
+        {
+            if (t == null || !t.Kept || !IsBuildState || !t.Signature.HasValue || Array.IndexOf(r.Parts, t.Signature.Value) < 0) return null;
+            var used = new List<MenuTower> { t };
+            bool tUsed = false;
+            foreach (var part in r.Parts)
+            {
+                if (!tUsed && t.Signature == part)
+                {
+                    tUsed = true;
+                    continue;
+                }
+                MenuTower found = null;
+                foreach (var o in towers)
+                {
+                    if (o == null || !o.Kept || used.Contains(o) || o.Signature != part) continue;
+                    found = o;
+                    break;
+                }
+                if (found == null) return null;
+                used.Add(found);
+            }
+            return used;
+        }
+
+        /// <summary>t 자리를 코스 메뉴로 바꾸고 나머지 재료는 빈 컵이 됨. 강화 단계는 재료 중 가장 높은 단계.</summary>
+        public void MakeCourse(MenuTower t, CourseRecipe r)
+        {
+            var parts = FindCourseParts(t, r);
+            if (parts == null) return;
+            int level = 0;
+            foreach (var p in parts) level = Math.Max(level, p.SignatureLevel);
+            foreach (var p in parts)
+                if (p != t) SetEmptyCup(p.Cell);
+            MovingFrom = null;
+            t.SetMenu(t.Flavor, t.Grade, r.Result);
+            t.SignatureLevel = level;
+            t.Refresh();
+            Selected = t.Cell;
+            ShowMessage($"코스 메뉴 완성: {t.Stats.Name}");
+            RecalcPath();
+        }
+
         void FinishRound(MenuTower chosen)
         {
             if (State != GameState.BuildChoose || !RoundDrinks.Contains(chosen)) return;
             MovingFrom = null;
+            if (chosen.Signature == SignatureMenu.InstaTea)
+            {
+                // 나머지 음료는 빈 컵이 되므로 사라지기 전에 공격력을 티에 옮겨 둠
+                foreach (var g in RoundDrinks)
+                {
+                    if (g == chosen) continue;
+                    chosen.InstaBonus += MenuDB.FlavorStats(g.Flavor, g.Grade).Damage;
+                }
+            }
             foreach (var g in RoundDrinks)
                 if (g != chosen) SetEmptyCup(g.Cell);
             RoundDrinks.Clear();
@@ -717,9 +967,38 @@ namespace CafeTowerDefense
             StartWave();
         }
 
+        /// <summary>이번 라운드에 아직 음료를 놓지 않았고 공격할 음료가 있으면 패스 가능</summary>
+        public bool CanPassRound
+        {
+            get
+            {
+                if (State != GameState.BuildPlace || RoundDrinks.Count > 0) return false;
+                foreach (var t in towers)
+                    if (t != null && t.Kept) return true;
+                return false;
+            }
+        }
+
+        /// <summary>이번 라운드 음료 5잔을 놓지 않는 대신 모든 음료 공격력을 영구히 1% 올리고 웨이브 시작</summary>
+        public void PassRound()
+        {
+            if (!CanPassRound) return;
+            PassCount++;
+            foreach (var t in towers)
+            {
+                if (t == null) continue;
+                t.DamageMult = DamageMult;
+                t.Refresh();
+            }
+            MovingFrom = null;
+            Selected = null;
+            StartWave();
+            ShowMessage($"배치 패스! 모든 음료 공격력 +{DamageBonusPercent:0.##}%");
+        }
+
         public void UpgradeSignature(MenuTower t)
         {
-            if (!t.Signature.HasValue || !t.Kept || !IsBuildState || t.SignatureLevel >= MenuDB.MaxSignatureLevel) return;
+            if (!t.Signature.HasValue || !MenuDB.CanUpgrade(t.Signature.Value) || !t.Kept || !IsBuildState || t.SignatureLevel >= MenuDB.MaxSignatureLevel) return;
             int cost = MenuDB.SignatureUpgradeCost(t.SignatureLevel);
             if (Coins < cost) return;
             Coins -= cost;
@@ -741,22 +1020,40 @@ namespace CafeTowerDefense
 
         // ------------------------------------------------------------------ 웨이브
 
+        /// <summary>1~200웨이브에 나오는 모든 몹의 체력 합계 = 최종 보스 체력</summary>
+        double FinalBossHp()
+        {
+            double sum = 0;
+            for (int w = 1; w < MaxWave; w++)
+            {
+                var info = WaveInfoFor(w);
+                sum += info.Hp * info.Count;
+            }
+            return sum;
+        }
+
         public WaveInfo WaveInfoFor(int w)
         {
-            // 웨이브마다 21%씩 늘어나 460웨이브쯤부터 float 범위를 넘으므로 상한을 둠 (무한대가 되면 체력바가 깨짐)
-            float hp = Mathf.Min(15f * Mathf.Pow(1.21f, w - 1) + 4f * w, 1e30f);
+            // 최종 보스는 도착하면 바로 영업 종료 (놓치고 승리하는 일이 없도록)
+            if (w >= MaxWave)
+                return new WaveInfo { Count = 1, Hp = FinalBossHp(), Speed = 1.1f, Interval = 1f, Bounty = 20 + w, Leak = 9999, Boss = true, Label = "최종 보스 생쥐 대왕" };
+
+            // 체력은 라운드마다 21%씩 오르고, 5의 배수 라운드에서는 상승폭이 2배(42%)가 됨
+            int doubled = w / 5;
+            double hp = 15.0 * System.Math.Pow(1.21, w - 1 - doubled) * System.Math.Pow(1.42, doubled) + 4.0 * w;
             int bounty = 1 + w / 4;
             if (w % 10 == 0)
-                return new WaveInfo { Count = 1, Hp = hp * 8f, Speed = 1.1f, Interval = 1f, Bounty = 20 + w, Leak = 5, Boss = true, Label = "생쥐 대장" };
+                return new WaveInfo { Count = 1, Hp = hp * 8, Speed = 1.1f, Interval = 1f, Bounty = 20 + w, Leak = 5, Boss = true, Label = "생쥐 대장" };
             if (w % 4 == 0)
-                return new WaveInfo { Count = 10, Hp = hp * 0.8f, Speed = 1.6f, Interval = 1f, Bounty = bounty, Leak = 1, Flying = true, Label = "파리 떼 (동선 무시)" };
+                return new WaveInfo { Count = 10, Hp = hp * 0.8, Speed = 1.6f, Interval = 1f, Bounty = bounty, Leak = 1, Flying = true, Label = "파리 떼 (동선 무시)" };
             if (w % 5 == 3)
-                return new WaveInfo { Count = 10, Hp = hp * 0.7f, Speed = 1.6f * 1.7f, Interval = 0.6f, Bounty = bounty, Leak = 1, Fast = true, Label = "바퀴벌레" };
+                return new WaveInfo { Count = 10, Hp = hp * 0.7, Speed = 1.6f * 1.7f, Interval = 0.6f, Bounty = bounty, Leak = 1, Fast = true, Label = "바퀴벌레" };
             return new WaveInfo { Count = 10, Hp = hp, Speed = 1.6f, Interval = 1f, Bounty = bounty, Leak = 1, Label = "개미 떼" };
         }
 
         void StartWave()
         {
+            waveStartSave = Capture(GameState.Wave);
             CurrentWave = WaveInfoFor(Wave);
             toSpawn = CurrentWave.Count;
             spawnTimer = 0.3f;
@@ -828,6 +1125,8 @@ namespace CafeTowerDefense
         void Step(float dt)
         {
             Time += dt;
+            if (!IsOver) TotalTime += dt;
+            if (State == GameState.Wave && Wave >= MaxWave) BossStageTime += dt; // 최종 보스 웨이브만
 
             if (State == GameState.Wave && toSpawn > 0)
             {
@@ -884,7 +1183,7 @@ namespace CafeTowerDefense
                 {
                     p.X = p.AimX; p.Y = p.AimY;
                     p.Done = true;
-                    ApplyHit(p.Src, p.Target, p.AimX, p.AimY, p.Damage);
+                    ApplyHit(p.Src, p.Target, p.AimX, p.AimY, p.Damage, p.Crit);
                 }
                 else
                 {
@@ -934,9 +1233,13 @@ namespace CafeTowerDefense
             t.Cooldown = s.Cooldown;
         }
 
-        void ApplyHit(MenuTower src, Pest target, float x, float y, float dmg)
+        void ApplyHit(MenuTower src, Pest target, float x, float y, float dmg, bool crit = false)
         {
-            if (!target.Dead) Hit(src, target, dmg);
+            if (!target.Dead)
+            {
+                DamageShown?.Invoke(target, dmg * (target.Flying ? src.Stats.AirMult : 1f), crit);
+                Hit(src, target, dmg);
+            }
             var s = src.Stats;
             Impact?.Invoke(src, x, y);
             if (s.SplashRadius > 0f)
@@ -997,15 +1300,16 @@ namespace CafeTowerDefense
             }
             Damage(e, dmg * (e.Flying ? s.AirMult : 1f), src);
             Hurt?.Invoke(e);
-            if (s.ExecutePct > 0f && !e.Dead && !e.Boss && e.Hp <= e.MaxHp * s.ExecutePct) Damage(e, e.Hp + 1f, src);
+            if (s.ExecutePct > 0f && !e.Dead && !e.Boss && e.Hp <= e.MaxHp * s.ExecutePct) Damage(e, e.Hp + 1.0, src);
         }
 
-        void Damage(Pest e, float dmg, MenuTower src)
+        void Damage(Pest e, double dmg, MenuTower src)
         {
             if (e.Dead || dmg <= 0f) return;
-            float applied = Mathf.Min(e.Hp, dmg);
+            double applied = System.Math.Min(e.Hp, dmg);
+            if (e.Boss && State == GameState.Wave && Wave >= MaxWave) BossDamage += applied; // 최종 보스에게 준 피해만
             e.Hp -= dmg;
-            if (src != null) src.TotalDamage += applied;
+            if (src != null) src.TotalDamage += (float)applied;
             if (e.Hp <= 0f)
             {
                 e.Dead = true;

@@ -30,6 +30,18 @@ namespace CafeTowerDefense
         public int Speed { get; private set; } = 1;
         int resumeSpeed = 1;
 
+        /// <summary>배속 버튼과 숫자키 1~3에 대응하는 배속</summary>
+        public static readonly int[] SpeedLevels = { 1, 3, 6 };
+
+        public RunRecords Records { get; private set; }
+        public CafeMusic Music { get; private set; }
+        public SaveStore Saves { get; private set; }
+        /// <summary>이어할 수 있는 저장된 영업 (없으면 null)</summary>
+        public CafeSaveData SavedGame { get; private set; }
+        /// <summary>방금 끝난 판의 순위 (10위 밖이면 0)</summary>
+        public int LastRank { get; private set; }
+        bool wasOver;
+
         Camera cam;
         CafeView view;
         CafeUI ui;
@@ -52,22 +64,103 @@ namespace CafeTowerDefense
             EnhancedTouchSupport.Enable(); // 두 손가락 확대/축소용 멀티터치
 
             Cafe = new Cafe();
+            Records = new RunRecords(System.IO.Path.Combine(Application.persistentDataPath, "records.json"));
+            Saves = new SaveStore(System.IO.Path.Combine(Application.persistentDataPath, "save.json"));
+            SavedGame = Saves.Load();
             SetupCamera();
             SetupLight();
             SetupPostProcessing();
             SetupEventSystem();
             view = new CafeView(Cafe, transform);
+            Music = new CafeMusic(gameObject);
             ui = new CafeUI(this, transform);
         }
 
         public void SetSpeed(int s)
         {
-            s = Mathf.Clamp(s, 0, 3);
+            s = Mathf.Clamp(s, 0, SpeedLevels[SpeedLevels.Length - 1]);
             if (s == 0 && Speed != 0) resumeSpeed = Speed;
             Speed = s;
         }
 
         public void TogglePause() => SetSpeed(Speed == 0 ? resumeSpeed : 0);
+
+        public void ClearLastRank() => LastRank = 0;
+
+        // ------------------------------------------------------------------ 이어하기
+
+        int savedVersion = -1;
+        float nextSaveAt;
+
+        /// <summary>판이 바뀔 때마다 (최대 1초에 한 번) 저장. 영업이 끝나면 저장을 지움. 시작 화면에서는 저장하지 않음.</summary>
+        void AutoSave(bool force)
+        {
+            if (ui == null || ui.ShowTitle) return;
+            if (Cafe.IsOver)
+            {
+                if (SavedGame != null)
+                {
+                    Saves.Delete();
+                    SavedGame = null;
+                }
+                return;
+            }
+            if (!force && (Cafe.Version == savedVersion || Time.unscaledTime < nextSaveAt)) return;
+            savedVersion = Cafe.Version;
+            nextSaveAt = Time.unscaledTime + 1f;
+            var d = Cafe.SaveData;
+            if (d == null) return;
+            Saves.Write(d);
+            SavedGame = d;
+        }
+
+        void OnApplicationPause(bool paused)
+        {
+            if (paused) AutoSave(true);
+        }
+
+        void OnApplicationFocus(bool focus)
+        {
+            if (!focus) AutoSave(true);
+        }
+
+        void OnApplicationQuit() => AutoSave(true);
+
+        /// <summary>저장된 영업을 불러옴. 실패하면 저장을 지우고 false.</summary>
+        public bool ContinueSaved()
+        {
+            if (SavedGame == null) return false;
+            if (Cafe.Restore(SavedGame))
+            {
+                savedVersion = -1;
+                return true;
+            }
+            Saves.Delete();
+            SavedGame = null;
+            return false;
+        }
+
+        /// <summary>지금 판의 기록 (진행 중이면 지금까지의 값)</summary>
+        public RunRecord CurrentRun() => new RunRecord
+        {
+            BossDamage = Cafe.BossDamage,
+            BossTime = Cafe.BossStageTime,
+            TotalTime = Cafe.TotalTime,
+            Desserts = Cafe.Desserts,
+            Coins = Cafe.Coins,
+            Wave = Cafe.Wave,
+            Victory = Cafe.State == GameState.Victory,
+        };
+
+        /// <summary>게임이 끝나는 순간 한 번만 기록을 저장. 중간에 새 영업을 누른 판은 저장하지 않음.</summary>
+        void SaveRecordIfEnded()
+        {
+            if (Cafe.IsOver && !wasOver)
+            {
+                LastRank = Records.Add(CurrentRun());
+            }
+            wasOver = Cafe.IsOver;
+        }
 
         // =================================================================== 초기 구성
 
@@ -146,7 +239,11 @@ namespace CafeTowerDefense
         void Update()
         {
             float dt = Mathf.Min(Time.unscaledDeltaTime, 0.1f);
-            Cafe.Update(dt * Speed);
+            Music.Update();
+            float gameDt = ui.ShowTitle ? 0f : dt * Speed;
+            Cafe.Update(gameDt);
+            SaveRecordIfEnded();
+            AutoSave(false);
             Cafe.TickUi(dt);
             if (flashTime > 0f) flashTime -= dt;
 
@@ -154,7 +251,7 @@ namespace CafeTowerDefense
             HandleInput(dt);
             ClampPan();
             ApplyCamera();
-            view.Sync(cam, flashCell, flashTime, hoverCell, dt * Speed); // 연출도 배속·일시정지를 따름
+            view.Sync(cam, flashCell, flashTime, hoverCell, gameDt); // 연출도 배속·일시정지를 따름
             ui.Refresh(cam);
         }
 
@@ -300,14 +397,25 @@ namespace CafeTowerDefense
 
         void HandleInput(float dt)
         {
+            if (ui.ShowTitle)
+            {
+                hoverCell = null;
+                return;
+            }
+            if (ui.ShowConfirm)
+            {
+                hoverCell = null;
+                if (Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame) ui.CloseConfirm();
+                return;
+            }
             var kb = Keyboard.current;
             if (kb != null)
             {
                 if (kb.escapeKey.wasPressedThisFrame) Deselect();
                 if (kb.spaceKey.wasPressedThisFrame && !Cafe.IsOver) TogglePause();
-                if (kb.digit1Key.wasPressedThisFrame || kb.numpad1Key.wasPressedThisFrame) SetSpeed(1);
-                if (kb.digit2Key.wasPressedThisFrame || kb.numpad2Key.wasPressedThisFrame) SetSpeed(2);
-                if (kb.digit3Key.wasPressedThisFrame || kb.numpad3Key.wasPressedThisFrame) SetSpeed(3);
+                if (kb.digit1Key.wasPressedThisFrame || kb.numpad1Key.wasPressedThisFrame) SetSpeed(SpeedLevels[0]);
+                if (kb.digit2Key.wasPressedThisFrame || kb.numpad2Key.wasPressedThisFrame) SetSpeed(SpeedLevels[1]);
+                if (kb.digit3Key.wasPressedThisFrame || kb.numpad3Key.wasPressedThisFrame) SetSpeed(SpeedLevels[2]);
                 if (kb.rKey.wasPressedThisFrame) ui.ShowRecipes = !ui.ShowRecipes;
                 if (kb.tabKey.wasPressedThisFrame) ui.TogglePanel();
                 if (kb.equalsKey.wasPressedThisFrame || kb.numpadPlusKey.wasPressedThisFrame) ZoomIn();
@@ -339,7 +447,7 @@ namespace CafeTowerDefense
 
             if (m.rightButton.wasPressedThisFrame) Deselect();
 
-            if (!overUI && !ui.ShowRecipes)
+            if (!overUI && !ui.ShowRecipes && !ui.ShowRanking)
             {
                 float wheel = m.scroll.ReadValue().y;
                 if (wheel != 0f)
@@ -443,6 +551,7 @@ namespace CafeTowerDefense
         void Deselect()
         {
             ui.ShowRecipes = false;
+            ui.ShowRanking = false;
             Cafe.CancelMove();
             Cafe.Selected = null;
         }
